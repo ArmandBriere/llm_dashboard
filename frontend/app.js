@@ -406,9 +406,13 @@ function renderSubscriptionCards(subs) {
           : `<span>spend <strong>$${snap.spend_used.toFixed(2)}</strong> ${curr}</span>`;
       }
 
-      const scopedHtml = snap.scoped_model
-        ? `<span>${escapeHtml(snap.scoped_model)} <strong>${snap.scoped_pct}%</strong></span>`
-        : `<span>standard quota</span>`;
+      const scopedPct = snap.scoped_pct != null ? snap.scoped_pct : 0;
+      // Snapshots taken before the scoped reset time was recorded have no
+      // reading of their own; the scoped limit sits in the weekly group, so
+      // say that rather than print an "Unknown" countdown.
+      const scopedFoot = snap.scoped_resets_at
+        ? `resets ${escapeHtml(snap.scoped_countdown || formatCountdown(snap.scoped_resets_at))}`
+        : "resets with the weekly window";
 
       // A cached reading, or one whose reset has already passed, no longer
       // describes the current window — show it as unverified rather than fact.
@@ -472,11 +476,18 @@ function renderSubscriptionCards(subs) {
             fillClass: "",
             foot: `resets ${escapeHtml(sevenDayCountdown)}`,
           })}
+          ${snap.scoped_model ? gauge({
+            title: `${escapeHtml(snap.scoped_model.toLowerCase())} weekly window`,
+            pct: scopedPct,
+            tone: scopedPct >= 90 ? "is-alert" : (scopedPct >= 75 ? "is-warn" : ""),
+            unverified: false,
+            fillClass: "",
+            foot: scopedFoot,
+          }) : ""}
         </div>
 
         <div class="meter-foot">
           ${spendHtml}
-          ${scopedHtml}
         </div>
       </article>
     `;
