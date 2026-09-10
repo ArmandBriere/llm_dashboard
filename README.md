@@ -121,8 +121,10 @@ llm_dashboard/
 │       └── claude_code.py  # Native Claude Code Keychain & Anthropic OAuth client
 ├── frontend/
 │   ├── index.html          # Web dashboard layout
-│   ├── style.css           # Clean dark-mode stylesheet
-│   └── app.js              # Chart.js timeline, live cards, filters, and polling
+│   ├── style.css           # "Console" design system: theme tokens and layout
+│   ├── theme.js            # Theme registry, picker, and token reader for the charts
+│   ├── app.js              # Chart.js timeline, quota gauges, filters, and polling
+│   └── usage.js            # Claude Code usage insights parsed from local transcripts
 ├── tests/
 │   ├── test_database.py    # Unit tests for database & event logic
 │   └── test_api.py         # Integration tests for FastAPI endpoints

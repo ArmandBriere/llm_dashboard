@@ -1,85 +1,126 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="console">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LLM Quota Tracker • Claude Code</title>
-  <link rel="stylesheet" href="/static/style.css?v=5.2">
+  <title>Quota Console · Claude Code</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="/static/style.css?v=6.0">
+
+  <!-- Applies the saved theme before first paint, so the page never flashes
+       the default one. -->
+  <script src="/static/theme.js?v=6.0"></script>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 </head>
 <body>
-  <div class="app-container">
-    <!-- Main Top Navigation -->
-    <header class="header">
-      <div class="header-left">
-        <div class="logo-badge">⚡ LLM Quota Tracker</div>
-        <span class="provider-pill">Claude Code (Native)</span>
-        <span id="live-indicator" class="live-dot pulse" title="Auto-polling Anthropic API every 5 minutes">Live Poller</span>
-      </div>
-      <div class="header-right">
-        <span id="last-updated">Connecting...</span>
-        <button id="refresh-btn" class="btn btn-primary" onclick="forceRefresh()">
-          <span class="btn-icon">↻</span> Poll Now
-        </button>
-      </div>
-    </header>
 
-    <!-- Subscriptions Cards Grid -->
-    <section class="subscriptions-section">
-      <div class="section-header">
-        <h2>Active Subscriptions</h2>
-        <span class="sub-email" id="subscription-count">2 subscriptions tracked</span>
-      </div>
-      <div id="subscriptions-grid" class="cards-grid">
-        <div class="empty-state">Loading subscription metrics...</div>
-      </div>
-    </section>
+<header class="rail">
+  <div class="wordmark">
+    <b>Quota Console</b>
+    <span class="wordmark-sub">claude code</span>
+  </div>
+  <span class="rail-divider"></span>
+  <span id="live-indicator" class="lamp pulse" title="Polling the Anthropic usage API every 5 minutes">polling</span>
 
-    <!-- Quota Visualizer & Filter Section -->
-    <section class="chart-container-card">
-      <div class="chart-header-row">
-        <div>
-          <h2>Quota Timeline & Reset Events</h2>
-          <p class="sub-email">Track 5-hour session drops, weekly pace, and quota refreshes.</p>
-          <p class="sub-email" id="chart-range-label"></p>
+  <span class="rail-spacer"></span>
+
+  <span id="last-updated">connecting…</span>
+
+  <div class="theme-picker" id="theme-picker">
+    <button class="btn theme-btn" id="theme-btn" onclick="toggleThemeMenu(event)"
+            aria-haspopup="true" aria-expanded="false" aria-controls="theme-menu">
+      <span class="theme-chip" aria-hidden="true">
+        <span style="background: var(--bg)"></span>
+        <span style="background: var(--signal)"></span>
+        <span style="background: var(--acct-1)"></span>
+        <span style="background: var(--acct-2)"></span>
+      </span>
+      <span id="theme-current">Console</span>
+    </button>
+    <div class="theme-menu" id="theme-menu" role="menu" aria-label="Theme" hidden>
+      <span class="label theme-menu-head">theme</span>
+      <div id="theme-list"></div>
+    </div>
+  </div>
+
+  <button id="refresh-btn" class="btn btn-signal" onclick="forceRefresh()">
+    <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+      <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.97"/><path d="M13.6 2.2v3.1h-3.1"/>
+    </svg>
+    Poll now
+  </button>
+</header>
+
+<main class="shell">
+
+  <!-- Hero: one meter per account. The gauges carry the whole read at a glance. -->
+  <section class="panel">
+    <div class="panel-inner">
+      <div class="panel-head">
+        <span class="panel-kicker">01</span>
+        <h2>Live quota</h2>
+        <span class="panel-meta" id="subscription-count">…</span>
+      </div>
+      <div id="subscriptions-grid" class="meters">
+        <div class="empty-state">Reading the latest poll…</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Timeline: burn-down curves with reset markers, plus the shared filters. -->
+  <section class="panel">
+    <div class="panel-inner">
+      <div class="panel-head">
+        <span class="panel-kicker">02</span>
+        <h2>Burn-down and resets</h2>
+        <span class="panel-meta" id="chart-range-label"></span>
+      </div>
+
+      <p class="panel-note">
+        Solid lines track the 5-hour window, dashed lines the weekly one. Vertical
+        markers show where a window reset or ran out. These filters also drive
+        everything below.
+      </p>
+
+      <div class="controls">
+        <div class="control">
+          <span class="label">accounts</span>
+          <div id="account-chips" class="chips" role="group" aria-label="Accounts">
+            <button class="chip active" data-sub-id="all" onclick="toggleAccount('all')">All</button>
+          </div>
         </div>
 
-        <!-- Toolbar -->
-        <div class="controls-toolbar">
-          <!-- Account chips: click to toggle one or many, "All" to show everything -->
-          <div class="toolbar-item toolbar-item-accounts">
-            <span class="toolbar-label">Accounts</span>
-            <div id="account-chips" class="chip-group" role="group" aria-label="Accounts">
-              <button class="chip active" data-sub-id="all" onclick="toggleAccount('all')">All</button>
+        <div class="control">
+          <span class="label">date</span>
+          <div class="control-row">
+            <input type="date" id="filter-date" onchange="applyFilters()" aria-label="Date">
+            <div class="segmented">
+              <button class="active" id="btn-today" onclick="setFilterDate('today')">Today</button>
+              <button id="btn-all-dates" onclick="setFilterDate('all')">All time</button>
             </div>
           </div>
+        </div>
 
-          <!-- Date Filter -->
-          <div class="toolbar-item">
-            <span class="toolbar-label">Date</span>
-            <input type="date" id="filter-date" onchange="applyFilters()">
-            <div class="pill-group">
-              <button class="pill-btn active" id="btn-today" onclick="setFilterDate('today')">Today</button>
-              <button class="pill-btn" id="btn-all-dates" onclick="setFilterDate('all')">All Time</button>
+        <div class="control">
+          <span class="label">hours</span>
+          <div class="control-row">
+            <div class="segmented" id="hour-presets">
+              <button data-hours="7-21" onclick="setHours(7, 21)">Work day</button>
+              <button data-hours="6-11" onclick="setHours(6, 11)">Morning</button>
+              <button data-hours="12-17" onclick="setHours(12, 17)">Afternoon</button>
+              <button data-hours="17-23" onclick="setHours(17, 23)">Evening</button>
+              <button data-hours="0-23" onclick="setHours(0, 23)">24h</button>
             </div>
-          </div>
-
-          <!-- Hour window: presets plus a dual-thumb slider -->
-          <div class="toolbar-item toolbar-item-hours">
-            <span class="toolbar-label">Hours</span>
-            <div class="pill-group" id="hour-presets">
-              <button class="pill-btn" data-hours="7-21" onclick="setHours(7, 21)">Work day</button>
-              <button class="pill-btn" data-hours="6-11" onclick="setHours(6, 11)">Morning</button>
-              <button class="pill-btn" data-hours="12-17" onclick="setHours(12, 17)">Afternoon</button>
-              <button class="pill-btn" data-hours="17-23" onclick="setHours(17, 23)">Evening</button>
-              <button class="pill-btn" data-hours="0-23" onclick="setHours(0, 23)">24h</button>
-            </div>
-            <div class="hour-range" title="Drag either handle to set the visible hours">
-              <span class="hour-range-label" id="hour-range-label">7 AM – 10 PM</span>
-              <div class="hour-range-track">
-                <div class="hour-range-fill" id="hour-range-fill"></div>
+            <div class="hours" title="Drag either handle to set the visible hours">
+              <span class="hours-label" id="hour-range-label">7 AM – 10 PM</span>
+              <div class="hours-track">
+                <div class="hours-fill" id="hour-range-fill"></div>
                 <input type="range" id="filter-start-hour" min="0" max="23" step="1" value="7"
                        aria-label="Start hour" oninput="onHourSlider('start')" onchange="applyFilters()">
                 <input type="range" id="filter-end-hour" min="0" max="23" step="1" value="21"
@@ -87,126 +128,140 @@
               </div>
             </div>
           </div>
+        </div>
 
-          <!-- Display Mode Toggle -->
-          <div class="toolbar-item">
-            <span class="toolbar-label">Mode</span>
-            <div class="pill-group">
-              <button id="mode-used" class="pill-btn active" onclick="setDisplayMode('used')">Used %</button>
-              <button id="mode-remaining" class="pill-btn" onclick="setDisplayMode('remaining')">Remaining %</button>
-            </div>
+        <div class="control">
+          <span class="label">axis</span>
+          <div class="segmented">
+            <button id="mode-used" class="active" onclick="setDisplayMode('used')">Used</button>
+            <button id="mode-remaining" onclick="setDisplayMode('remaining')">Remaining</button>
           </div>
         </div>
       </div>
 
-      <!-- Chart Canvas -->
-      <div class="chart-wrapper">
+      <div class="chart-frame">
         <canvas id="quotaChart"></canvas>
       </div>
-    </section>
+    </div>
+  </section>
 
-    <!-- Detected Refresh & Quota Events Activity Log -->
-    <section class="events-container-card">
-      <div class="section-header">
-        <h2>Detected Refresh & Reset Events</h2>
-        <span class="sub-email" id="events-count">0 events</span>
+  <!-- Event log -->
+  <section class="panel">
+    <div class="panel-inner">
+      <div class="panel-head">
+        <span class="panel-kicker">03</span>
+        <h2>Reset log</h2>
+        <span class="panel-meta" id="events-count">0 events</span>
       </div>
-      <div class="events-list" id="events-list">
-        <div class="empty-state">No refresh events recorded in this time window. Refreshes will automatically log here when detected.</div>
+      <div class="events" id="events-list">
+        <div class="empty-state">Nothing recorded in this window. Resets and exhaustions land here as the poller detects them.</div>
       </div>
-    </section>
+    </div>
+  </section>
 
-    <!-- Local Claude Code usage analytics parsed from ~/.claude*/projects transcripts -->
-    <section class="usage-section">
-      <div class="section-header usage-section-header">
-        <div>
-          <h2>Claude Code Usage Insights</h2>
-          <p class="sub-email">Models, sessions, tokens and timing, read from the local session transcripts. Follows the account, date and hour filters above.</p>
-          <p class="sub-email" id="usage-meta"></p>
-        </div>
-        <div class="usage-header-controls">
-          <span class="toolbar-label">Weight by</span>
-          <div class="pill-group" title="Cost weighting prices a cache read at a tenth of a fresh token and output several times more, so it tracks quota consumption better than raw counts">
-            <button id="usage-weight-cost" class="pill-btn active" onclick="setUsageWeight('cost')">Est. cost</button>
-            <button id="usage-weight-tokens" class="pill-btn" onclick="setUsageWeight('tokens')">Raw tokens</button>
+  <!-- Local Claude Code usage analytics parsed from ~/.claude*/projects transcripts -->
+  <section class="panel">
+    <div class="panel-inner">
+      <div class="panel-head">
+        <span class="panel-kicker">04</span>
+        <h2>Where the quota went</h2>
+        <span class="panel-meta" id="usage-meta"></span>
+      </div>
+
+      <p class="panel-note">
+        Read from your local session transcripts, filtered to the same accounts,
+        date and hours as the chart above.
+      </p>
+
+      <div class="controls">
+        <div class="control">
+          <span class="label">weight by</span>
+          <div class="segmented" title="Cost weighting prices a cache read at a tenth of a fresh token and output several times more, so it tracks quota consumption better than raw counts">
+            <button id="usage-weight-cost" class="active" onclick="setUsageWeight('cost')">Est. cost</button>
+            <button id="usage-weight-tokens" onclick="setUsageWeight('tokens')">Raw tokens</button>
           </div>
         </div>
       </div>
 
-      <div class="usage-stats" id="usage-stats">
+      <div class="stats" id="usage-stats">
         <div class="empty-state">Loading usage…</div>
       </div>
 
-      <div class="usage-card">
-        <div class="usage-card-header">
-          <h3>5-hour windows · what consumed each one</h3>
-          <span class="sub-email">Each model's share of the window's peak utilisation. Only windows observed by the poller.</span>
-        </div>
-        <div id="usage-windows" class="usage-windows"></div>
-      </div>
-
-      <div class="usage-grid-2">
-        <div class="usage-card">
-          <div class="usage-card-header">
-            <h3>Model mix</h3>
-            <span class="sub-email" id="usage-model-caption"></span>
+      <div class="blocks" style="margin-top: 26px;">
+        <div class="block">
+          <div class="block-head">
+            <h3>5-hour windows</h3>
+            <span class="block-meta">each model's share of the window's peak utilisation</span>
           </div>
-          <div id="usage-model-bar" class="share-bar"></div>
-          <div id="usage-model-table" class="usage-table-wrap"></div>
+          <div id="usage-windows" class="windows"></div>
         </div>
-        <div class="usage-card">
-          <div class="usage-card-header">
-            <h3>Cache &amp; output</h3>
-            <span class="sub-email">Where the input tokens came from</span>
+
+        <div class="grid-2">
+          <div class="block">
+            <div class="block-head">
+              <h3>Model mix</h3>
+              <span class="block-meta" id="usage-model-caption"></span>
+            </div>
+            <div id="usage-model-bar" class="share-bar"></div>
+            <div id="usage-model-table" class="table-wrap"></div>
           </div>
-          <div id="usage-cache"></div>
-        </div>
-      </div>
 
-      <div class="usage-card">
-        <div class="usage-card-header">
-          <h3>Activity over time</h3>
-          <span class="sub-email" id="usage-timeline-caption"></span>
-        </div>
-        <div class="usage-chart-wrapper">
-          <canvas id="usageTimelineChart"></canvas>
-        </div>
-      </div>
-
-      <div class="usage-grid-2">
-        <div class="usage-card">
-          <div class="usage-card-header">
-            <h3>When you work</h3>
-            <span class="sub-email" id="usage-heatmap-caption"></span>
+          <div class="block">
+            <div class="block-head">
+              <h3>Cache and output</h3>
+              <span class="block-meta">where the input tokens came from</span>
+            </div>
+            <div id="usage-cache"></div>
           </div>
-          <div id="usage-heatmap" class="heatmap"></div>
         </div>
-        <div class="usage-card">
-          <div class="usage-card-header">
-            <h3>Projects</h3>
-            <span class="sub-email">By weighted usage</span>
+
+        <div class="block">
+          <div class="block-head">
+            <h3>Activity over time</h3>
+            <span class="block-meta" id="usage-timeline-caption"></span>
           </div>
-          <div id="usage-projects" class="usage-table-wrap"></div>
+          <div class="chart-frame chart-frame-sm">
+            <canvas id="usageTimelineChart"></canvas>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="block">
+            <div class="block-head">
+              <h3>When you work</h3>
+              <span class="block-meta" id="usage-heatmap-caption"></span>
+            </div>
+            <div id="usage-heatmap" class="heatmap"></div>
+          </div>
+
+          <div class="block">
+            <div class="block-head">
+              <h3>Projects</h3>
+              <span class="block-meta">by weighted usage</span>
+            </div>
+            <div id="usage-projects" class="table-wrap"></div>
+          </div>
+        </div>
+
+        <div class="block">
+          <div class="block-head">
+            <h3>Sessions</h3>
+            <span class="block-meta" id="usage-sessions-caption"></span>
+          </div>
+          <div id="usage-sessions" class="table-wrap sessions-wrap"></div>
         </div>
       </div>
+    </div>
+  </section>
 
-      <div class="usage-card">
-        <div class="usage-card-header">
-          <h3>Sessions</h3>
-          <span class="sub-email" id="usage-sessions-caption"></span>
-        </div>
-        <div id="usage-sessions" class="usage-table-wrap sessions-wrap"></div>
-      </div>
-    </section>
+</main>
 
-    <!-- Footer -->
-    <footer class="footer">
-      <span>Auto-polling Anthropic OAuth usage API every 5 minutes. Direct macOS Keychain integration.</span>
-      <span style="font-family: var(--font-mono);">LLM Quota Tracker v1.2</span>
-    </footer>
-  </div>
+<footer class="foot">
+  <span>Polls the Anthropic OAuth usage API every 5 minutes · credentials read from the macOS Keychain</span>
+  <span>LLM Quota Tracker v1.2</span>
+</footer>
 
-  <script src="/static/app.js?v=5.0"></script>
-  <script src="/static/usage.js?v=5.3"></script>
+<script src="/static/app.js?v=6.0"></script>
+<script src="/static/usage.js?v=6.0"></script>
 </body>
 </html>

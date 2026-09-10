@@ -24,34 +24,40 @@ function isHelperSession(s) {
   return (s.turns || 0) <= 1;
 }
 
-// One hue per model. Fable is purple, Opus cyan, Sonnet amber, Haiku teal;
-// point releases of a family take a lighter tint of the same hue so the family
-// still reads as one thing at a glance.
-const MODEL_COLORS = {
-  "claude-fable-5-1": "#a855f7",
-  "claude-fable-5": "#c084fc",
-  "claude-mythos-5-1": "#7c3aed",
-  "claude-opus-5": "#22d3ee",
-  "claude-opus-4-8": "#67e8f9",
-  "claude-opus-4-5": "#a5f3fc",
-  "claude-sonnet-5": "#f59e0b",
-  "claude-sonnet-4-5": "#fbbf24",
-  "claude-haiku-4-5-20251001": "#10b981",
+/**
+ * One hue per model family, taken from the active theme. Fable is violet, Opus
+ * cyan, Sonnet amber, Haiku green; a point release takes a lighter tint of the
+ * same hue so the family still reads as one thing at a glance. Models the theme
+ * has no slot for take the spare hues, assigned once and kept.
+ */
+const MODEL_FAMILY_SLOT = {
+  "claude-fable-5-1": "fable",
+  "claude-fable-5": "fableAlt",
+  "claude-mythos-5-1": "fable",
+  "claude-opus-5": "opus",
+  "claude-opus-4-8": "opusAlt",
+  "claude-opus-4-5": "opusAlt",
+  "claude-sonnet-5": "sonnet",
+  "claude-sonnet-4-5": "sonnetAlt",
+  "claude-haiku-4-5-20251001": "haiku",
 };
-const MODEL_FALLBACK_COLORS = ["#f43f5e", "#ec4899", "#94a3b8", "#64748b"];
-const modelFallbackAssigned = new Map();
+const modelSpareSlot = new Map();
 
 function modelColor(model) {
-  if (MODEL_COLORS[model]) return MODEL_COLORS[model];
+  const palette = tokens().models;
+  const slot = MODEL_FAMILY_SLOT[model];
+  if (slot && palette[slot]) return palette[slot];
+
   const m = String(model || "").toLowerCase();
-  if (m.includes("fable")) return "#a855f7";
-  if (m.includes("opus")) return "#22d3ee";
-  if (m.includes("sonnet")) return "#f59e0b";
-  if (m.includes("haiku")) return "#10b981";
-  if (!modelFallbackAssigned.has(model)) {
-    modelFallbackAssigned.set(model, MODEL_FALLBACK_COLORS[modelFallbackAssigned.size % MODEL_FALLBACK_COLORS.length]);
+  if (m.includes("fable") || m.includes("mythos")) return palette.fable;
+  if (m.includes("opus")) return palette.opus;
+  if (m.includes("sonnet")) return palette.sonnet;
+  if (m.includes("haiku")) return palette.haiku;
+
+  if (!modelSpareSlot.has(model)) {
+    modelSpareSlot.set(model, modelSpareSlot.size % palette.spare.length);
   }
-  return modelFallbackAssigned.get(model);
+  return palette.spare[modelSpareSlot.get(model)];
 }
 
 // ---------- formatting ----------
@@ -246,7 +252,7 @@ function renderUsageMeta(summary) {
 
 function statTile(label, value, hint, extraClass = "") {
   return `
-    <div class="stat-tile ${extraClass}">
+    <div class="stat ${extraClass}">
       <div class="stat-tile-label">${escapeHtml(label)}</div>
       <div class="stat-tile-value">${value}</div>
       ${hint ? `<div class="stat-tile-hint">${hint}</div>` : ""}
@@ -275,7 +281,7 @@ function renderUsageStats(summary) {
     statTile("Output tokens", fmtTokens(summary.output_tokens), `${fmtPct(thinkShare, 0)} of it thinking`),
     statTile("Cache hit rate", fmtPct(summary.cache_hit_ratio * 100, 1), `${fmtTokens(summary.cache_read_tokens)} read from cache`),
     statTile("Tool calls", fmtInt(summary.tool_calls), `${(summary.turns ? summary.tool_calls / summary.turns : 0).toFixed(1)} per turn`),
-    statTile("Est. API cost", fmtUSD(summary.est_cost_usd), perAccount || "what this would cost on pay-as-you-go", "stat-tile-wide"),
+    statTile("Est. API cost", fmtUSD(summary.est_cost_usd), perAccount || "what this would cost on pay-as-you-go", "stat-wide"),
   ].join("");
 }
 
@@ -302,7 +308,7 @@ function renderWindows(windows) {
       const share = byCost ? m.share_cost : m.share_tokens;
       return `
         <div class="win-row">
-          <span class="win-dot" style="background:${modelColor(m.model)}"></span>
+          <span class="dot" style="background:${modelColor(m.model)}"></span>
           <span class="win-model">${escapeHtml(m.model_label)}</span>
           <span class="win-pct">${fmtPct(m[shareKey])}<small> of window</small></span>
           <span class="win-detail">${fmtPct(share * 100, 0)} of ${weightLabel()} · ${fmtInt(m.turns)} turns · ${fmtTokens(m.total_tokens)} tok</span>
@@ -314,7 +320,7 @@ function renderWindows(windows) {
     const dateStr = getSelectedDateString();
     const startLabel = dateStr ? fmtTime(w.starts_at) : fmtDateTime(w.starts_at);
     return `
-      <div class="win-card" style="--account:${color.line}">
+      <div class="win" style="--account:${color.line}">
         <div class="win-head">
           <div class="win-title">
             ${accountSwatch(w.subscription_id)}
@@ -380,11 +386,12 @@ function renderCache(summary) {
     el.innerHTML = `<div class="empty-state">No turns in this range.</div>`;
     return;
   }
+  const palette = tokens().models;
   const rows = [
-    { label: "Cache reads", value: summary.cache_read_tokens, color: "#22d3ee", hint: "Context replayed from cache (cheapest)" },
-    { label: "Cache writes", value: summary.cache_creation_tokens, color: "#6366f1", hint: `${fmtTokens(summary.cache_1h_tokens)} with 1h TTL · ${fmtTokens(summary.cache_5m_tokens)} with 5m TTL` },
-    { label: "Fresh input", value: summary.input_tokens, color: "#f59e0b", hint: "Uncached prompt tokens" },
-    { label: "Output", value: summary.output_tokens, color: "#a855f7", hint: `${fmtTokens(summary.thinking_tokens)} thinking` },
+    { label: "Cache reads", value: summary.cache_read_tokens, color: palette.opus, hint: "Context replayed from cache (cheapest)" },
+    { label: "Cache writes", value: summary.cache_creation_tokens, color: palette.opusAlt, hint: `${fmtTokens(summary.cache_1h_tokens)} with 1h TTL · ${fmtTokens(summary.cache_5m_tokens)} with 5m TTL` },
+    { label: "Fresh input", value: summary.input_tokens, color: palette.sonnet, hint: "Uncached prompt tokens" },
+    { label: "Output", value: summary.output_tokens, color: palette.fable, hint: `${fmtTokens(summary.thinking_tokens)} thinking` },
   ];
   const total = rows.reduce((a, r) => a + (Number(r.value) || 0), 0) || 1;
   el.innerHTML = `
@@ -394,7 +401,7 @@ function renderCache(summary) {
     <div class="cache-rows">
       ${rows.map((r) => `
         <div class="cache-row">
-          <span class="win-dot" style="background:${r.color}"></span>
+          <span class="dot" style="background:${r.color}"></span>
           <span class="cache-label">${escapeHtml(r.label)}</span>
           <span class="cache-value">${fmtTokens(r.value)}</span>
           <span class="cache-pct">${fmtPct((r.value / total) * 100)}</span>
@@ -460,6 +467,7 @@ function renderTimeline(rows, bucket) {
   };
 
   const isTokens = state.usageWeight === "tokens";
+  const t = tokens();
   usageState.timelineChart = new Chart(canvas.getContext("2d"), {
     type: "bar",
     data: {
@@ -468,7 +476,7 @@ function renderTimeline(rows, bucket) {
         label: pretty(m),
         data: labels.map((b) => (byBucket.get(b) || {})[m] || 0),
         backgroundColor: modelColor(m),
-        borderRadius: 3,
+        borderRadius: 0,
         stack: "usage",
       })),
     },
@@ -477,11 +485,18 @@ function renderTimeline(rows, bucket) {
       maintainAspectRatio: false,
       animation: { duration: 250 },
       plugins: {
-        legend: { position: "bottom", labels: { color: "#94a3b8", boxWidth: 12, boxHeight: 12, padding: 14, font: { size: 11 } } },
+        legend: { position: "bottom", labels: { color: t.ink2, boxWidth: 10, boxHeight: 10, padding: 14, font: { size: 10, family: t.fontMono } } },
         tooltip: {
-          backgroundColor: "rgba(15, 19, 29, 0.95)",
-          borderColor: "rgba(255,255,255,0.1)",
+          backgroundColor: t.surfaceRaised,
+          titleColor: t.ink,
+          bodyColor: t.ink2,
+          footerColor: t.ink,
+          borderColor: t.rule,
           borderWidth: 1,
+          cornerRadius: 2,
+          titleFont: { family: t.fontMono, size: 11 },
+          bodyFont: { family: t.fontMono, size: 11 },
+          footerFont: { family: t.fontMono, size: 11 },
           callbacks: {
             label: (ctx) => ` ${ctx.dataset.label}: ${isTokens ? fmtTokens(ctx.parsed.y) : fmtUSD(ctx.parsed.y)}`,
             footer: (items) => {
@@ -492,12 +507,13 @@ function renderTimeline(rows, bucket) {
         },
       },
       scales: {
-        x: { stacked: true, grid: { display: false }, ticks: { color: "#64748b", font: { size: 11 }, maxRotation: 0, autoSkip: true } },
+        x: { stacked: true, border: { color: t.rule }, grid: { display: false }, ticks: { color: t.ink3, font: { size: 10, family: t.fontMono }, maxRotation: 0, autoSkip: true } },
         y: {
           stacked: true,
           beginAtZero: true,
-          grid: { color: "rgba(255,255,255,0.05)" },
-          ticks: { color: "#64748b", font: { size: 11 }, callback: (v) => (isTokens ? fmtTokens(v) : fmtUSD(v)) },
+          border: { color: t.rule },
+          grid: { color: t.ruleFaint },
+          ticks: { color: t.ink3, font: { size: 10, family: t.fontMono }, callback: (v) => (isTokens ? fmtTokens(v) : fmtUSD(v)) },
         },
       },
     },
@@ -541,14 +557,15 @@ function renderHeatmap(cells) {
 
   // Monday-first display order.
   const order = [1, 2, 3, 4, 5, 6, 0];
+  const heat = tokens().heatRgb;
   const hourHeader = Array.from({ length: 24 }, (_, h) => `<div class="hm-hour">${h % 3 === 0 ? formatHourLabel(h).replace(" ", "") : ""}</div>`).join("");
   const body = order.map((d) => `
     <div class="hm-day">${days[d]}</div>
     ${grid[d].map((v, h) => {
       const t = v / max;
-      const alpha = v ? 0.12 + Math.sqrt(t) * 0.78 : 0;
+      const a = v ? 0.12 + Math.sqrt(t) * 0.78 : 0;
       const inRange = getSelectedDateString() ? h >= state.startHour && h <= state.endHour : true;
-      return `<div class="hm-cell ${inRange ? "" : "hm-cell-out"}" style="background: rgba(99, 102, 241, ${alpha.toFixed(3)})" title="${days[d]} ${formatHourLabel(h)} · ${fmtWeight(v)}"></div>`;
+      return `<div class="hm-cell ${inRange ? "" : "hm-cell-out"}" style="background: ${a ? `rgba(${heat[0]}, ${heat[1]}, ${heat[2]}, ${a.toFixed(3)})` : "transparent"}" title="${days[d]} ${formatHourLabel(h)} · ${fmtWeight(v)}"></div>`;
     }).join("")}`).join("");
   el.innerHTML = `<div class="hm-grid"><div class="hm-corner"></div>${hourHeader}${body}</div>`;
 }
