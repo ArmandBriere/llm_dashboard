@@ -34,45 +34,50 @@ function parseIsoDate(str) {
 
 /**
  * One hue per account, fixed by identity so a filter never repaints the
- * survivors. The first two match the T3 Code provider accents: Labs is green
- * (lifted from #1d700e to a step that reads on the dark surface), Vooban is
- * blue. Extra accounts take the next free slot in a fixed order. The palette was
- * validated for colour-vision deficiency on this surface.
+ * survivors. The hues come from the active theme's data palette, so switching
+ * theme re-tints the accounts without changing which account owns which slot.
+ * Named accounts are pinned: Labs takes the green slot, Vooban the blue one.
+ * Every theme's palette was checked for colour-vision deficiency on its surface.
  */
-const ACCOUNT_PALETTE = [
-  { key: "green", line: "#34a832", soft: "#6fcf6b", fill: "rgba(52, 168, 50, 0.14)", tint: "rgba(52, 168, 50, 0.16)", border: "rgba(52, 168, 50, 0.45)" },
-  { key: "blue", line: "#3c74d5", soft: "#82a9ea", fill: "rgba(60, 116, 213, 0.14)", tint: "rgba(60, 116, 213, 0.16)", border: "rgba(60, 116, 213, 0.45)" },
-  { key: "amber", line: "#d97706", soft: "#f0ad4e", fill: "rgba(217, 119, 6, 0.14)", tint: "rgba(217, 119, 6, 0.16)", border: "rgba(217, 119, 6, 0.45)" },
-  { key: "pink", line: "#db2777", soft: "#ec6ea6", fill: "rgba(219, 39, 119, 0.14)", tint: "rgba(219, 39, 119, 0.16)", border: "rgba(219, 39, 119, 0.45)" },
-];
+const ACCOUNT_SLOT_BY_NAME = { voobanlabs: 0, labs: 0, vooban: 1 };
 
-// Accounts whose colour should match the rest of the user's tooling.
-const ACCOUNT_COLOR_BY_NAME = { voobanlabs: "green", labs: "green", vooban: "blue" };
+function accountPalette() {
+  return tokens().accounts.map((a) => ({
+    key: a.key,
+    line: a.line,
+    soft: a.soft,
+    fill: alpha(a.rgb, 0.13),
+    tint: alpha(a.rgb, 0.16),
+    border: alpha(a.rgb, 0.45),
+  }));
+}
 
-function nameColorKey(sub) {
+function nameSlot(sub) {
   const n = String((sub && (sub.organization_name || sub.email)) || "").toLowerCase().replace(/\s+/g, "");
-  return ACCOUNT_COLOR_BY_NAME[n] || null;
+  const slot = ACCOUNT_SLOT_BY_NAME[n];
+  return slot == null ? null : slot;
 }
 
 function getAccountColor(subOrId) {
+  const palette = accountPalette();
   const sub = typeof subOrId === "object" && subOrId !== null
     ? subOrId
     : state.subscriptions.find((s) => String(s.id) === String(subOrId));
 
-  const byName = nameColorKey(sub);
-  if (byName) return ACCOUNT_PALETTE.find((p) => p.key === byName);
+  const named = nameSlot(sub);
+  if (named != null) return palette[named % palette.length];
 
   // Unnamed accounts take the free hues in a fixed order by subscription id,
   // so the colour follows the account rather than its position in a filter.
-  const claimed = new Set(state.subscriptions.map(nameColorKey).filter(Boolean));
-  const free = ACCOUNT_PALETTE.filter((p) => !claimed.has(p.key));
+  const claimed = new Set(state.subscriptions.map(nameSlot).filter((s) => s != null));
+  const free = palette.filter((_, idx) => !claimed.has(idx));
   const unnamed = state.subscriptions
-    .filter((s) => !nameColorKey(s))
+    .filter((s) => nameSlot(s) == null)
     .map((s) => String(s.id))
     .sort((a, b) => Number(a) - Number(b));
   const id = sub ? String(sub.id) : String(subOrId);
   const idx = Math.max(0, unnamed.indexOf(id));
-  return free[idx % free.length] || ACCOUNT_PALETTE[0];
+  return free[idx % free.length] || palette[0];
 }
 
 function accountName(sub) {
@@ -142,7 +147,7 @@ function syncFilterButtons() {
   const isAllTime = state.selectedDate === "all";
   setActive("btn-today", !isAllTime && getSelectedDateString() === getLocalDateString(new Date()));
   setActive("btn-all-dates", isAllTime);
-  document.querySelectorAll("#hour-presets .pill-btn").forEach((btn) => {
+  document.querySelectorAll("#hour-presets button").forEach((btn) => {
     const [a, b] = String(btn.dataset.hours || "").split("-").map(Number);
     btn.classList.toggle("active", a === state.startHour && b === state.endHour);
   });
@@ -196,7 +201,7 @@ function renderWindowLabel() {
 
   const bounds = getWindowBounds();
   if (!bounds) {
-    el.textContent = "Showing all recorded history.";
+    el.textContent = "all recorded history";
     return;
   }
 
@@ -204,8 +209,8 @@ function renderWindowLabel() {
   const timeOpts = { hour: "numeric", minute: "2-digit" };
   const isFullDay = state.startHour === 0 && state.endHour === 23;
   el.textContent = isFullDay
-    ? `Showing ${dateLabel}, full 24 hours.`
-    : `Showing ${dateLabel}, ${bounds.min.toLocaleTimeString([], timeOpts)} – ${bounds.max.toLocaleTimeString([], timeOpts)}.`;
+    ? `${dateLabel} · full 24 hours`
+    : `${dateLabel} · ${bounds.min.toLocaleTimeString([], timeOpts)} – ${bounds.max.toLocaleTimeString([], timeOpts)}`;
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -316,8 +321,54 @@ function updateLastPolledTimestamp() {
   const el = document.getElementById("last-updated");
   if (el) {
     const now = new Date();
-    el.textContent = `Synced: ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+    el.textContent = `synced ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
   }
+}
+
+/** Tick marks for a gauge: every 5%, emphasised at each quarter. */
+const GAUGE_TICKS = Array.from({ length: 21 }, (_, k) => k * 5)
+  .map((pct) => `<i class="${pct % 25 === 0 ? "major" : ""}" style="left:${pct}%"></i>`)
+  .join("");
+
+/**
+ * A gauge: the figure, a tick scale, a filled track and a needle at the reading.
+ * `tone` colours the figure; an unverified reading hatches the track and hides
+ * the needle rather than claiming a position it cannot vouch for.
+ */
+function gauge({ title, pct, tone, unverified, fillClass, foot }) {
+  const width = Math.min(Math.max(pct, 0), 100);
+  return `
+    <div class="gauge">
+      <div class="gauge-top">
+        <span class="gauge-title">${title}</span>
+        <span class="gauge-value ${tone}">${unverified ? "—" : pct.toFixed(1)}<small>${unverified ? "" : "% used"}</small></span>
+      </div>
+      <div class="gauge-scale" aria-hidden="true">${GAUGE_TICKS}</div>
+      <div class="gauge-track" role="meter" aria-valuemin="0" aria-valuemax="100"
+           aria-valuenow="${unverified ? 0 : width.toFixed(1)}" aria-label="${title}">
+        <div class="gauge-fill ${unverified ? "is-unknown" : fillClass || ""}" data-pct="${unverified ? 100 : width}" style="width:${unverified ? 100 : width}%"></div>
+        <div class="gauge-needle ${unverified ? "is-hidden" : ""}" data-pct="${width}" style="left:${width}%"></div>
+      </div>
+      <div class="gauge-foot">${foot}</div>
+    </div>`;
+}
+
+// The fill animates in once, on the first paint. Re-running it on every 30s
+// poll would turn a background refresh into a distraction.
+let metersHaveAnimated = false;
+
+function animateGaugesOnce(container) {
+  if (metersHaveAnimated) return;
+  metersHaveAnimated = true;
+  container.querySelectorAll(".gauge-fill, .gauge-needle").forEach((el) => {
+    const pct = el.dataset.pct;
+    if (el.classList.contains("gauge-fill")) el.style.width = "0%";
+    else el.style.left = "0%";
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (el.classList.contains("gauge-fill")) el.style.width = `${pct}%`;
+      else el.style.left = `${pct}%`;
+    }));
+  });
 }
 
 function renderSubscriptionCards(subs) {
@@ -326,7 +377,7 @@ function renderSubscriptionCards(subs) {
   if (!container) return;
 
   if (countEl) {
-    countEl.textContent = `${subs.length} subscription${subs.length !== 1 ? "s" : ""} active`;
+    countEl.textContent = `${subs.length} account${subs.length !== 1 ? "s" : ""} tracked`;
   }
 
   if (!subs || subs.length === 0) {
@@ -344,27 +395,20 @@ function renderSubscriptionCards(subs) {
       const sevenDayCountdown = snap.seven_day_countdown || formatCountdown(snap.seven_day_resets_at);
 
       const color = getAccountColor(sub);
-
-      // Org initials avatar
       const orgName = sub.organization_name || "Claude";
-      const initials = orgName.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 
-      // Spend details
-      let spendHtml = `<span class="spend-badge">💳 Spend: None</span>`;
+      let spendHtml = `<span>no spend limit set</span>`;
       if (snap.spend_used != null) {
         const curr = snap.spend_currency || "USD";
-        const isLimit = snap.spend_limit != null && snap.spend_used >= snap.spend_limit;
-        if (snap.spend_limit != null) {
-          spendHtml = `<span class="spend-badge ${isLimit ? "spend-critical" : ""}">💳 $${snap.spend_used.toFixed(2)} / $${snap.spend_limit.toFixed(2)} ${curr}</span>`;
-        } else {
-          spendHtml = `<span class="spend-badge">💳 $${snap.spend_used.toFixed(2)} ${curr}</span>`;
-        }
+        const atLimit = snap.spend_limit != null && snap.spend_used >= snap.spend_limit;
+        spendHtml = snap.spend_limit != null
+          ? `<span class="${atLimit ? "is-alert" : ""}">spend <strong>$${snap.spend_used.toFixed(2)}</strong> of $${snap.spend_limit.toFixed(2)} ${curr}</span>`
+          : `<span>spend <strong>$${snap.spend_used.toFixed(2)}</strong> ${curr}</span>`;
       }
 
-      // Scoped model text
       const scopedHtml = snap.scoped_model
-        ? `<span>⚡ Model ${escapeHtml(snap.scoped_model)}: <strong>${snap.scoped_pct}%</strong></span>`
-        : `<span>⚡ Standard Quota</span>`;
+        ? `<span>${escapeHtml(snap.scoped_model)} <strong>${snap.scoped_pct}%</strong></span>`
+        : `<span>standard quota</span>`;
 
       // A cached reading, or one whose reset has already passed, no longer
       // describes the current window — show it as unverified rather than fact.
@@ -375,86 +419,71 @@ function renderSubscriptionCards(subs) {
       const isIdleWindow = snap.five_hour_pct != null && !snap.five_hour_resets_at;
       const isUnverified = !isIdleWindow && !!(snap.is_stale || snap.is_expired);
       const isExhausted5h = fiveHourPct >= 100 && !isUnverified;
-      const statColor5h = isUnverified
-        ? "stat-unknown"
-        : (isExhausted5h ? "stat-exhausted" : (fiveHourPct >= 80 ? "stat-warning" : "stat-normal"));
+      const tone5h = isUnverified
+        ? "is-unknown"
+        : (isExhausted5h ? "is-alert" : (fiveHourPct >= 80 ? "is-warn" : ""));
 
       let tag5h;
       if (isIdleWindow) {
-        tag5h = `<span class="quota-status-tag tag-idle" title="No 5-hour window is currently open. It starts on your next request and runs for 5 hours.">💤 Idle</span>`;
+        tag5h = `<span class="tag tag-ok" title="No 5-hour window is currently open. It starts on your next request and runs for 5 hours.">idle</span>`;
       } else if (snap.is_expired) {
-        tag5h = `<span class="quota-status-tag tag-amber" title="This quota window already reset. The figure below predates the reset and is not current — waiting on a live reading.">⏳ Awaiting refresh</span>`;
+        tag5h = `<span class="tag tag-warn" title="This quota window already reset. The figure predates the reset and is not current — waiting on a live reading.">awaiting refresh</span>`;
       } else if (snap.is_stale) {
-        tag5h = `<span class="quota-status-tag tag-amber" title="Anthropic's usage API rate-limited the last poll, so this is a cached reading rather than a live one.">⚠️ Cached</span>`;
+        tag5h = `<span class="tag tag-warn" title="Anthropic's usage API rate-limited the last poll, so this is a cached reading rather than a live one.">cached</span>`;
       } else if (isExhausted5h) {
-        tag5h = `<span class="quota-status-tag tag-red">⚠️ Exhausted</span>`;
+        tag5h = `<span class="tag tag-alert">exhausted</span>`;
       } else {
-        tag5h = `<span class="quota-status-tag tag-cyan">Normal</span>`;
+        tag5h = `<span class="tag tag-ok">live</span>`;
       }
 
+      const foot5h = isIdleWindow
+        ? "no window open — one starts on your next request"
+        : snap.is_expired
+          ? `was ${fiveHourPct.toFixed(1)}% before the reset`
+          : snap.is_stale
+            ? `last known ${fiveHourPct.toFixed(1)}% · resets ${escapeHtml(fiveHourCountdown)}`
+            : `resets ${escapeHtml(fiveHourCountdown)}`;
+
       return `
-      <div class="sub-card" style="--account: ${color.line}; --account-soft: ${color.soft}; --account-tint: ${color.tint}; --account-border: ${color.border};">
-        <div class="sub-header">
-          <div class="sub-org-group">
-            <div class="sub-avatar">${initials}</div>
-            <div>
-              <div class="sub-name">${escapeHtml(orgName)}</div>
-              <div class="sub-email">${escapeHtml(sub.email)}</div>
-            </div>
+      <article class="meter" style="--account: ${color.line};">
+        <div class="meter-head">
+          <span class="meter-flag" aria-hidden="true"></span>
+          <div class="meter-id">
+            <div class="meter-name">${escapeHtml(orgName)}</div>
+            <div class="meter-email">${escapeHtml(sub.email)}</div>
           </div>
+          <div class="meter-aside">${tag5h}</div>
         </div>
 
-        <!-- Metric Stat Blocks Grid -->
-        <div class="quota-blocks-grid">
-          <!-- 5-Hour Block -->
-          <div class="quota-block">
-            <div class="quota-block-title">
-              <span>5-Hour Quota</span>
-              ${tag5h}
-            </div>
-            <div class="quota-hero-stat">
-              <span class="quota-hero-num ${statColor5h}">${isUnverified ? "—" : fiveHourPct.toFixed(1) + "%"}</span>
-            </div>
-            <div class="progress-track">
-              <div class="progress-bar bar-5h ${isExhausted5h ? "exhausted" : ""} ${isUnverified ? "unverified" : ""}" style="width: ${isUnverified ? 100 : Math.min(fiveHourPct, 100)}%"></div>
-            </div>
-            <div class="quota-time-meta">
-              ${isIdleWindow
-                ? `<span>🕒 No active session — a window opens on your next request</span>`
-                : snap.is_expired
-                ? `<span>🕒 Was ${fiveHourPct.toFixed(1)}% before the reset — awaiting a live reading</span>`
-                : snap.is_stale
-                  ? `<span>🕒 Last known ${fiveHourPct.toFixed(1)}% · resets ${escapeHtml(fiveHourCountdown)}</span>`
-                  : `<span>🕒 Resets ${fiveHourCountdown}</span>`}
-            </div>
-          </div>
-
-          <!-- 7-Day Block -->
-          <div class="quota-block">
-            <div class="quota-block-title">
-              <span>7-Day Quota</span>
-              <span class="quota-status-tag tag-purple">Weekly</span>
-            </div>
-            <div class="quota-hero-stat">
-              <span class="quota-hero-num stat-normal">${sevenDayPct.toFixed(1)}%</span>
-            </div>
-            <div class="progress-track">
-              <div class="progress-bar bar-7d" style="width: ${Math.min(sevenDayPct, 100)}%"></div>
-            </div>
-            <div class="quota-time-meta">
-              <span>📅 Resets ${sevenDayCountdown}</span>
-            </div>
-          </div>
+        <div class="gauges">
+          ${gauge({
+            title: "5-hour window",
+            pct: fiveHourPct,
+            tone: tone5h,
+            unverified: isUnverified,
+            fillClass: isExhausted5h ? "is-alert" : "",
+            foot: foot5h,
+          })}
+          ${gauge({
+            title: "weekly window",
+            pct: sevenDayPct,
+            tone: sevenDayPct >= 90 ? "is-alert" : (sevenDayPct >= 75 ? "is-warn" : ""),
+            unverified: false,
+            fillClass: "",
+            foot: `resets ${escapeHtml(sevenDayCountdown)}`,
+          })}
         </div>
 
-        <div class="sub-card-footer">
+        <div class="meter-foot">
           ${spendHtml}
           ${scopedHtml}
         </div>
-      </div>
+      </article>
     `;
     })
     .join("");
+
+  animateGaugesOnce(container);
 }
 
 function updateSubscriptionDropdown(subs) {
@@ -537,6 +566,20 @@ async function loadEvents() {
   }
 }
 
+/** Thin-stroke glyphs; emoji render inconsistently and read as decoration. */
+const EVENT_ICONS = {
+  five_hour_reset: '<path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.97"/><path d="M13.6 2.2v3.1h-3.1"/>',
+  seven_day_reset: '<rect x="2.2" y="3.2" width="11.6" height="10.6" rx="1"/><path d="M2.2 6.4h11.6M5.4 1.8v2.6M10.6 1.8v2.6"/>',
+  quota_exhausted: '<path d="M8 2.2 14.4 13.4H1.6z"/><path d="M8 6.4v3.2M8 11.4v.6"/>',
+};
+
+function eventIcon(type) {
+  const path = EVENT_ICONS[type] || EVENT_ICONS.five_hour_reset;
+  const cls = type === "quota_exhausted" ? "event-kind is-alert" : "event-kind";
+  return `<svg class="${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+               stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+}
+
 function renderEvents(events) {
   const container = document.getElementById("events-list");
   const countEl = document.getElementById("events-count");
@@ -547,35 +590,24 @@ function renderEvents(events) {
   }
 
   if (!events || events.length === 0) {
-    container.innerHTML = `<div class="empty-state">No refresh events recorded in this time window. Refreshes will automatically log here when detected.</div>`;
+    container.innerHTML = `<div class="empty-state">Nothing recorded in this window. Resets and exhaustions land here as the poller detects them.</div>`;
     return;
   }
 
   container.innerHTML = events
     .map((e) => {
-      let icon = "⚡";
-      let iconClass = "icon-5h";
-      if (e.event_type === "seven_day_reset") {
-        icon = "📅";
-        iconClass = "icon-7d";
-      } else if (e.event_type === "quota_exhausted") {
-        icon = "🛑";
-        iconClass = "icon-exhausted";
-      }
       const color = getAccountColor(e.subscription_id);
-
       const d = parseIsoDate(e.timestamp);
-      const timeStr = d ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Recently";
+      const timeStr = d ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "recently";
       const dateStr = d ? d.toLocaleDateString([], { month: "short", day: "numeric" }) : "";
 
       return `
-      <div class="event-row" style="--account: ${color.line}; --account-tint: ${color.tint}; --account-border: ${color.border};">
-        <div class="event-left">
-          <div class="event-icon-badge ${iconClass}">${icon}</div>
-          <div class="event-details">
-            <span class="event-desc">${escapeHtml(e.description)}</span>
-            <span class="event-sub-label"><span class="chip-swatch"></span>${escapeHtml(e.organization_name || e.email)}</span>
-          </div>
+      <div class="event" style="--account: ${color.line};">
+        <span class="event-mark" aria-hidden="true"></span>
+        ${eventIcon(e.event_type)}
+        <div class="event-body">
+          <div class="event-desc">${escapeHtml(e.description)}</div>
+          <span class="event-account"><span class="chip-swatch"></span>${escapeHtml(e.organization_name || e.email)}</span>
         </div>
         <div class="event-time">${dateStr} ${timeStr}</div>
       </div>
@@ -620,6 +652,10 @@ async function loadSnapshotsAndRenderChart(showLoading = true) {
 function renderChart(snapshots) {
   const ctx = document.getElementById("quotaChart");
   if (!ctx) return;
+
+  // Chart.js paints on a canvas and cannot read CSS variables, so the theme
+  // has to be handed to it as concrete values on every render.
+  const t = tokens();
 
   // Group snapshots by subscription_id
   const grouped = {};
@@ -678,7 +714,7 @@ function renderChart(snapshots) {
       pointRadius: 2.5,
       pointHoverRadius: 6,
       pointBackgroundColor: color.line,
-      pointBorderColor: "#0f131d",
+      pointBorderColor: t.bg,
       pointBorderWidth: 1,
       fill: true,
       spanGaps: true,
@@ -724,7 +760,7 @@ function renderChart(snapshots) {
         type: "line",
         xMin: d,
         xMax: d,
-        borderColor: isExhausted ? "#ef4444" : color.line,
+        borderColor: isExhausted ? t.bad : color.line,
         borderWidth: 2,
         borderDash: isWeekly ? [2, 4] : [4, 4],
         label: {
@@ -732,13 +768,13 @@ function renderChart(snapshots) {
           content: `${name} · ${kind}`,
           position: "end",
           yAdjust: 8 + rank * 24,
-          backgroundColor: "rgba(15, 19, 29, 0.92)",
-          color: isExhausted ? "#fca5a5" : color.soft,
-          borderColor: isExhausted ? "rgba(239, 68, 68, 0.5)" : color.border,
+          backgroundColor: t.surface,
+          color: isExhausted ? t.badSoft : color.soft,
+          borderColor: isExhausted ? t.bad : color.border,
           borderWidth: 1,
           padding: { x: 6, y: 3 },
-          borderRadius: 4,
-          font: { size: 10, weight: "bold" },
+          borderRadius: 2,
+          font: { size: 10, family: t.fontMono },
         },
       };
     });
@@ -779,20 +815,23 @@ function renderChart(snapshots) {
         legend: {
           position: "top",
           labels: {
-            color: "#cbd5e1",
+            color: t.ink2,
             boxWidth: 26,
             boxHeight: 2,
             padding: 16,
-            font: { size: 12, family: "-apple-system, Inter, sans-serif" },
+            font: { size: 11, family: t.fontMono },
           },
         },
         tooltip: {
-          backgroundColor: "rgba(15, 23, 42, 0.95)",
-          titleColor: "#ffffff",
-          bodyColor: "#f1f5f9",
-          borderColor: "rgba(255, 255, 255, 0.12)",
+          backgroundColor: t.surfaceRaised,
+          titleColor: t.ink,
+          bodyColor: t.ink2,
+          borderColor: t.rule,
           borderWidth: 1,
-          padding: 12,
+          titleFont: { family: t.fontMono, size: 11 },
+          bodyFont: { family: t.fontMono, size: 11 },
+          cornerRadius: 2,
+          padding: 10,
           boxPadding: 6,
           usePointStyle: true,
           callbacks: {
@@ -829,35 +868,37 @@ function renderChart(snapshots) {
             },
             tooltipFormat: "MMM d, hh:mm a",
           },
+          border: { color: t.rule },
           grid: {
-            color: "rgba(255, 255, 255, 0.04)",
+            color: t.ruleFaint,
           },
           ticks: {
-            color: "#64748b",
+            color: t.ink3,
             maxRotation: 0,
             autoSkip: true,
             maxTicksLimit: 14,
-            font: { size: 11 },
+            font: { size: 10, family: t.fontMono },
           },
         },
         y: {
           min: 0,
           max: 100,
+          border: { color: t.rule },
           grid: {
-            color: "rgba(255, 255, 255, 0.05)",
+            color: t.ruleFaint,
           },
           ticks: {
-            color: "#64748b",
-            font: { size: 11 },
+            color: t.ink3,
+            font: { size: 10, family: t.fontMono },
             callback: function (val) {
               return val + "%";
             },
           },
           title: {
             display: true,
-            text: isRemaining ? "Remaining Quota %" : "Quota Used %",
-            color: "#64748b",
-            font: { size: 12, weight: 600 },
+            text: isRemaining ? "quota remaining" : "quota used",
+            color: t.ink3,
+            font: { size: 10, family: t.fontMono },
           },
         },
       },
@@ -943,11 +984,17 @@ function setDisplayMode(mode) {
   loadSnapshotsAndRenderChart();
 }
 
+const POLL_BTN_LABEL = `
+  <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+    <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.97"/><path d="M13.6 2.2v3.1h-3.1"/>
+  </svg>
+  Poll now`;
+
 async function forceRefresh() {
   const btn = document.getElementById("refresh-btn");
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = `<span class="btn-icon">⏳</span> Polling...`;
+    btn.textContent = "Polling…";
   }
   try {
     const res = await fetch("/api/refresh", { method: "POST" });
@@ -961,7 +1008,7 @@ async function forceRefresh() {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = `<span class="btn-icon">↻</span> Poll Now`;
+      btn.innerHTML = POLL_BTN_LABEL;
     }
   }
 }
@@ -997,3 +1044,14 @@ function escapeHtml(text) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+
+// Colours are baked into the rendered markup and into the canvas, so a theme
+// switch has to repaint everything rather than relying on the cascade.
+document.addEventListener("themechange", () => {
+  if (!state.subscriptions.length && !state.events.length) return;
+  renderSubscriptionCards(state.subscriptions);
+  renderAccountChips(state.subscriptions);
+  renderEvents(state.events);
+  loadSnapshotsAndRenderChart(false);
+  if (typeof usageState !== "undefined" && usageState.data) renderUsage(usageState.data);
+});
