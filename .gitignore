@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Local data: quota history and transcript index, plus backups
+llm_dashboard.db
+llm_dashboard.db-journal
+llm_dashboard.db-wal
+llm_dashboard.db-shm
+llm_dashboard.db.bak*
+*.db
+
+# Generated LaunchAgent plist (service.sh renders it from the template)
+com.armandbriere.llm-dashboard.plist
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LLM Quota Tracker • Claude Code</title>
+  <link rel="stylesheet" href="/static/style.css?v=5.2">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Main Top Navigation -->
+    <header class="header">
+      <div class="header-left">
+        <div class="logo-badge">⚡ LLM Quota Tracker</div>
+        <span class="provider-pill">Claude Code (Native)</span>
+        <span id="live-indicator" class="live-dot pulse" title="Auto-polling Anthropic API every 5 minutes">Live Poller</span>
+      </div>
+      <div class="header-right">
+        <span id="last-updated">Connecting...</span>
+        <button id="refresh-btn" class="btn btn-primary" onclick="forceRefresh()">
+          <span class="btn-icon">↻</span> Poll Now
+        </button>
+      </div>
+    </header>
+
+    <!-- Subscriptions Cards Grid -->
+    <section class="subscriptions-section">
+      <div class="section-header">
+        <h2>Active Subscriptions</h2>
+        <span class="sub-email" id="subscription-count">2 subscriptions tracked</span>
+      </div>
+      <div id="subscriptions-grid" class="cards-grid">
+        <div class="empty-state">Loading subscription metrics...</div>
+      </div>
+    </section>
+
+    <!-- Quota Visualizer & Filter Section -->
+    <section class="chart-container-card">
+      <div class="chart-header-row">
+        <div>
+          <h2>Quota Timeline & Reset Events</h2>
+          <p class="sub-email">Track 5-hour session drops, weekly pace, and quota refreshes.</p>
+          <p class="sub-email" id="chart-range-label"></p>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="controls-toolbar">
+          <!-- Account chips: click to toggle one or many, "All" to show everything -->
+          <div class="toolbar-item toolbar-item-accounts">
+            <span class="toolbar-label">Accounts</span>
+            <div id="account-chips" class="chip-group" role="group" aria-label="Accounts">
+              <button class="chip active" data-sub-id="all" onclick="toggleAccount('all')">All</button>
+            </div>
+          </div>
+
+          <!-- Date Filter -->
+          <div class="toolbar-item">
+            <span class="toolbar-label">Date</span>
+            <input type="date" id="filter-date" onchange="applyFilters()">
+            <div class="pill-group">
+              <button class="pill-btn active" id="btn-today" onclick="setFilterDate('today')">Today</button>
+              <button class="pill-btn" id="btn-all-dates" onclick="setFilterDate('all')">All Time</button>
+            </div>
+          </div>
+
+          <!-- Hour window: presets plus a dual-thumb slider -->
+          <div class="toolbar-item toolbar-item-hours">
+            <span class="toolbar-label">Hours</span>
+            <div class="pill-group" id="hour-presets">
+              <button class="pill-btn" data-hours="7-21" onclick="setHours(7, 21)">Work day</button>
+              <button class="pill-btn" data-hours="6-11" onclick="setHours(6, 11)">Morning</button>
+              <button class="pill-btn" data-hours="12-17" onclick="setHours(12, 17)">Afternoon</button>
+              <button class="pill-btn" data-hours="17-23" onclick="setHours(17, 23)">Evening</button>
+              <button class="pill-btn" data-hours="0-23" onclick="setHours(0, 23)">24h</button>
+            </div>
+            <div class="hour-range" title="Drag either handle to set the visible hours">
+              <span class="hour-range-label" id="hour-range-label">7 AM – 10 PM</span>
+              <div class="hour-range-track">
+                <div class="hour-range-fill" id="hour-range-fill"></div>
+                <input type="range" id="filter-start-hour" min="0" max="23" step="1" value="7"
+                       aria-label="Start hour" oninput="onHourSlider('start')" onchange="applyFilters()">
+                <input type="range" id="filter-end-hour" min="0" max="23" step="1" value="21"
+                       aria-label="End hour" oninput="onHourSlider('end')" onchange="applyFilters()">
+              </div>
+            </div>
+          </div>
+
+          <!-- Display Mode Toggle -->
+          <div class="toolbar-item">
+            <span class="toolbar-label">Mode</span>
+            <div class="pill-group">
+              <button id="mode-used" class="pill-btn active" onclick="setDisplayMode('used')">Used %</button>
+              <button id="mode-remaining" class="pill-btn" onclick="setDisplayMode('remaining')">Remaining %</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chart Canvas -->
+      <div class="chart-wrapper">
+        <canvas id="quotaChart"></canvas>
+      </div>
+    </section>
+
+    <!-- Detected Refresh & Quota Events Activity Log -->
+    <section class="events-container-card">
+      <div class="section-header">
+        <h2>Detected Refresh & Reset Events</h2>
+        <span class="sub-email" id="events-count">0 events</span>
+      </div>
+      <div class="events-list" id="events-list">
+        <div class="empty-state">No refresh events recorded in this time window. Refreshes will automatically log here when detected.</div>
+      </div>
+    </section>
+
+    <!-- Local Claude Code usage analytics parsed from ~/.claude*/projects transcripts -->
+    <section class="usage-section">
+      <div class="section-header usage-section-header">
+        <div>
+          <h2>Claude Code Usage Insights</h2>
+          <p class="sub-email">Models, sessions, tokens and timing, read from the local session transcripts. Follows the account, date and hour filters above.</p>
+          <p class="sub-email" id="usage-meta"></p>
+        </div>
+        <div class="usage-header-controls">
+          <span class="toolbar-label">Weight by</span>
+          <div class="pill-group" title="Cost weighting prices a cache read at a tenth of a fresh token and output several times more, so it tracks quota consumption better than raw counts">
+            <button id="usage-weight-cost" class="pill-btn active" onclick="setUsageWeight('cost')">Est. cost</button>
+            <button id="usage-weight-tokens" class="pill-btn" onclick="setUsageWeight('tokens')">Raw tokens</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="usage-stats" id="usage-stats">
+        <div class="empty-state">Loading usage…</div>
+      </div>
+
+      <div class="usage-card">
+        <div class="usage-card-header">
+          <h3>5-hour windows · what consumed each one</h3>
+          <span class="sub-email">Each model's share of the window's peak utilisation. Only windows observed by the poller.</span>
+        </div>
+        <div id="usage-windows" class="usage-windows"></div>
+      </div>
+
+      <div class="usage-grid-2">
+        <div class="usage-card">
+          <div class="usage-card-header">
+            <h3>Model mix</h3>
+            <span class="sub-email" id="usage-model-caption"></span>
+          </div>
+          <div id="usage-model-bar" class="share-bar"></div>
+          <div id="usage-model-table" class="usage-table-wrap"></div>
+        </div>
+        <div class="usage-card">
+          <div class="usage-card-header">
+            <h3>Cache &amp; output</h3>
+            <span class="sub-email">Where the input tokens came from</span>
+          </div>
+          <div id="usage-cache"></div>
+        </div>
+      </div>
+
+      <div class="usage-card">
+        <div class="usage-card-header">
+          <h3>Activity over time</h3>
+          <span class="sub-email" id="usage-timeline-caption"></span>
+        </div>
+        <div class="usage-chart-wrapper">
+          <canvas id="usageTimelineChart"></canvas>
+        </div>
+      </div>
+
+      <div class="usage-grid-2">
+        <div class="usage-card">
+          <div class="usage-card-header">
+            <h3>When you work</h3>
+            <span class="sub-email" id="usage-heatmap-caption"></span>
+          </div>
+          <div id="usage-heatmap" class="heatmap"></div>
+        </div>
+        <div class="usage-card">
+          <div class="usage-card-header">
+            <h3>Projects</h3>
+            <span class="sub-email">By weighted usage</span>
+          </div>
+          <div id="usage-projects" class="usage-table-wrap"></div>
+        </div>
+      </div>
+
+      <div class="usage-card">
+        <div class="usage-card-header">
+          <h3>Sessions</h3>
+          <span class="sub-email" id="usage-sessions-caption"></span>
+        </div>
+        <div id="usage-sessions" class="usage-table-wrap sessions-wrap"></div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>Auto-polling Anthropic OAuth usage API every 5 minutes. Direct macOS Keychain integration.</span>
+      <span style="font-family: var(--font-mono);">LLM Quota Tracker v1.2</span>
+    </footer>
+  </div>
+
+  <script src="/static/app.js?v=5.0"></script>
+  <script src="/static/usage.js?v=5.3"></script>
+</body>
+</html>

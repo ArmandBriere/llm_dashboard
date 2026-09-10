@@ -1,0 +1,639 @@
+/**
+ * Claude Code usage insights: model mix, 5-hour window attribution, cache
+ * efficiency, activity timeline, weekday/hour heatmap, projects and sessions.
+ * Data comes from /api/usage/* (parsed local transcripts) and follows the same
+ * account / date / hour filters as the quota chart. Depends on app.js for
+ * state, account colours and helpers.
+ */
+
+const usageState = {
+  timelineChart: null,
+  loading: false,
+  data: null,
+  // T3 Code and Claude Code spawn one-turn helper sessions (titles, branch
+  // names). They are real usage but bury the sessions you actually worked in.
+  hideHelperSessions: true,
+};
+
+function toggleHelperSessions(checked) {
+  usageState.hideHelperSessions = !!checked;
+  if (usageState.data) renderSessions(usageState.data.sessions);
+}
+
+function isHelperSession(s) {
+  return (s.turns || 0) <= 1;
+}
+
+// One hue per model. Fable is purple, Opus cyan, Sonnet amber, Haiku teal;
+// point releases of a family take a lighter tint of the same hue so the family
+// still reads as one thing at a glance.
+const MODEL_COLORS = {
+  "claude-fable-5-1": "#a855f7",
+  "claude-fable-5": "#c084fc",
+  "claude-mythos-5-1": "#7c3aed",
+  "claude-opus-5": "#22d3ee",
+  "claude-opus-4-8": "#67e8f9",
+  "claude-opus-4-5": "#a5f3fc",
+  "claude-sonnet-5": "#f59e0b",
+  "claude-sonnet-4-5": "#fbbf24",
+  "claude-haiku-4-5-20251001": "#10b981",
+};
+const MODEL_FALLBACK_COLORS = ["#f43f5e", "#ec4899", "#94a3b8", "#64748b"];
+const modelFallbackAssigned = new Map();
+
+function modelColor(model) {
+  if (MODEL_COLORS[model]) return MODEL_COLORS[model];
+  const m = String(model || "").toLowerCase();
+  if (m.includes("fable")) return "#a855f7";
+  if (m.includes("opus")) return "#22d3ee";
+  if (m.includes("sonnet")) return "#f59e0b";
+  if (m.includes("haiku")) return "#10b981";
+  if (!modelFallbackAssigned.has(model)) {
+    modelFallbackAssigned.set(model, MODEL_FALLBACK_COLORS[modelFallbackAssigned.size % MODEL_FALLBACK_COLORS.length]);
+  }
+  return modelFallbackAssigned.get(model);
+}
+
+// ---------- formatting ----------
+
+function fmtTokens(n) {
+  const v = Number(n) || 0;
+  if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+  if (v >= 1e6) return `${(v / 1e6).toFixed(v >= 1e8 ? 0 : 1)}M`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(v >= 1e5 ? 0 : 1)}k`;
+  return String(Math.round(v));
+}
+
+function fmtInt(n) {
+  return (Number(n) || 0).toLocaleString();
+}
+
+function fmtUSD(n) {
+  const v = Number(n) || 0;
+  if (v >= 1000) return `$${(v / 1000).toFixed(1)}k`;
+  if (v >= 100) return `$${v.toFixed(0)}`;
+  if (v >= 1) return `$${v.toFixed(2)}`;
+  return `$${v.toFixed(3)}`;
+}
+
+function fmtPct(v, digits = 1) {
+  return `${(Number(v) || 0).toFixed(digits)}%`;
+}
+
+function fmtDuration(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  if (h < 24) return rem ? `${h}h ${rem}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
+}
+
+function fmtTime(iso) {
+  const d = parseIsoDate(iso);
+  return d ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "–";
+}
+
+function fmtDateTime(iso) {
+  const d = parseIsoDate(iso);
+  if (!d) return "–";
+  const today = getLocalDateString(new Date()) === getLocalDateString(d);
+  return today
+    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtRelative(iso) {
+  const d = parseIsoDate(iso);
+  if (!d) return "";
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.round(diff / 60)} min ago`;
+  if (diff < 86400) return `${Math.round(diff / 3600)} h ago`;
+  return `${Math.round(diff / 86400)} d ago`;
+}
+
+function weightOf(row) {
+  return state.usageWeight === "tokens" ? Number(row.total_tokens) || 0 : Number(row.est_cost_usd) || 0;
+}
+
+function fmtWeight(v) {
+  return state.usageWeight === "tokens" ? fmtTokens(v) : fmtUSD(v);
+}
+
+function weightLabel() {
+  return state.usageWeight === "tokens" ? "tokens" : "est. cost";
+}
+
+function subById(id) {
+  return state.subscriptions.find((s) => String(s.id) === String(id)) || null;
+}
+
+function accountSwatch(subId) {
+  const sub = subById(subId);
+  const color = getAccountColor(sub || subId);
+  const name = sub ? accountName(sub) : "Unmapped";
+  return `<span class="acct-tag" style="--account:${color.line}; --account-tint:${color.tint}">${escapeHtml(name)}</span>`;
+}
+
+function modelChip(model, label) {
+  return `<span class="model-chip" style="--model:${modelColor(model)}">${escapeHtml(label || model)}</span>`;
+}
+
+// ---------- controls ----------
+
+function syncUsageControls() {
+  const costBtn = document.getElementById("usage-weight-cost");
+  const tokBtn = document.getElementById("usage-weight-tokens");
+  if (costBtn) costBtn.classList.toggle("active", state.usageWeight !== "tokens");
+  if (tokBtn) tokBtn.classList.toggle("active", state.usageWeight === "tokens");
+}
+
+function setUsageWeight(mode) {
+  state.usageWeight = mode === "tokens" ? "tokens" : "cost";
+  syncUsageControls();
+  saveViewState();
+  if (usageState.data) renderUsage(usageState.data);
+}
+
+// ---------- loading ----------
+
+function usageQuery(extra = {}) {
+  const params = new URLSearchParams();
+  const ids = selectedIdsParam();
+  if (ids) params.set("subscription_ids", ids);
+  const dateStr = getSelectedDateString();
+  if (dateStr) {
+    params.set("date", dateStr);
+    // Hours only make sense inside a single day.
+    params.set("start_hour", state.startHour);
+    params.set("end_hour", state.endHour);
+  }
+  Object.entries(extra).forEach(([k, v]) => params.set(k, v));
+  return params.toString();
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  return res.json();
+}
+
+async function loadUsage() {
+  if (usageState.loading) return;
+  usageState.loading = true;
+  try {
+    const bucket = getSelectedDateString() ? "hour" : "day";
+    const [summary, models, windows, timeline, heatmap, projects, sessions] = await Promise.all([
+      fetchJson(`/api/usage/summary?${usageQuery()}`),
+      fetchJson(`/api/usage/models?${usageQuery()}`),
+      fetchJson(`/api/usage/windows?${usageQuery({ limit: 12 })}`),
+      fetchJson(`/api/usage/timeline?${usageQuery({ bucket })}`),
+      fetchJson(`/api/usage/heatmap?${usageQuery()}`),
+      fetchJson(`/api/usage/projects?${usageQuery({ limit: 12 })}`),
+      fetchJson(`/api/usage/sessions?${usageQuery({ limit: 80 })}`),
+    ]);
+    usageState.data = { summary, models, windows, timeline, heatmap, projects, sessions, bucket };
+    renderUsage(usageState.data);
+  } catch (err) {
+    console.error("Failed to load usage insights:", err);
+    const stats = document.getElementById("usage-stats");
+    if (stats) stats.innerHTML = `<div class="empty-state">Could not load usage data: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    usageState.loading = false;
+  }
+}
+
+function renderUsage(data) {
+  renderUsageMeta(data.summary);
+  renderUsageStats(data.summary);
+  renderWindows(data.windows);
+  renderModelMix(data.models);
+  renderCache(data.summary);
+  renderTimeline(data.timeline, data.bucket);
+  renderHeatmap(data.heatmap);
+  renderProjects(data.projects);
+  renderSessions(data.sessions);
+}
+
+// ---------- meta + stats ----------
+
+function scopeLabel() {
+  const dateStr = getSelectedDateString();
+  if (!dateStr) return "all time";
+  const today = dateStr === getLocalDateString(new Date());
+  const hours = state.startHour === 0 && state.endHour === 23
+    ? ""
+    : `, ${formatHourLabel(state.startHour)} – ${formatHourLabel(state.endHour + 1)}`;
+  return `${today ? "today" : dateStr}${hours}`;
+}
+
+function renderUsageMeta(summary) {
+  const el = document.getElementById("usage-meta");
+  if (!el) return;
+  const parts = [];
+  if (summary.files_indexed) parts.push(`${fmtInt(summary.files_indexed)} transcripts indexed`);
+  if (summary.last_scanned_at) parts.push(`scanned ${fmtRelative(summary.last_scanned_at)}`);
+  if (summary.first_turn) {
+    const first = parseIsoDate(summary.first_turn);
+    if (first) parts.push(`history since ${first.toLocaleDateString([], { month: "short", day: "numeric" })}`);
+  }
+  el.textContent = parts.join(" · ");
+}
+
+function statTile(label, value, hint, extraClass = "") {
+  return `
+    <div class="stat-tile ${extraClass}">
+      <div class="stat-tile-label">${escapeHtml(label)}</div>
+      <div class="stat-tile-value">${value}</div>
+      ${hint ? `<div class="stat-tile-hint">${hint}</div>` : ""}
+    </div>`;
+}
+
+function renderUsageStats(summary) {
+  const el = document.getElementById("usage-stats");
+  if (!el) return;
+  if (!summary || !summary.turns) {
+    el.innerHTML = `<div class="empty-state">No Claude Code activity for ${escapeHtml(scopeLabel())}.</div>`;
+    return;
+  }
+  const perAccount = (summary.per_account || []).map((a) => {
+    const sub = subById(a.subscription_id);
+    const color = getAccountColor(sub || a.subscription_id);
+    return `<span class="stat-split" style="--account:${color.line}">${escapeHtml(sub ? accountName(sub) : a.account_key)} ${fmtWeight(weightOf(a))}</span>`;
+  }).join("");
+  const outputShare = summary.total_tokens ? (summary.output_tokens / summary.total_tokens) * 100 : 0;
+  const thinkShare = summary.output_tokens ? (summary.thinking_tokens / summary.output_tokens) * 100 : 0;
+  const perSession = summary.sessions ? summary.total_tokens / summary.sessions : 0;
+
+  el.innerHTML = [
+    statTile("Sessions", fmtInt(summary.sessions), `${fmtInt(summary.turns)} model turns · ${fmtInt(summary.sidechain_turns)} by subagents`),
+    statTile("Tokens processed", fmtTokens(summary.total_tokens), `${fmtTokens(perSession)} per session · ${fmtPct(outputShare)} output`),
+    statTile("Output tokens", fmtTokens(summary.output_tokens), `${fmtPct(thinkShare, 0)} of it thinking`),
+    statTile("Cache hit rate", fmtPct(summary.cache_hit_ratio * 100, 1), `${fmtTokens(summary.cache_read_tokens)} read from cache`),
+    statTile("Tool calls", fmtInt(summary.tool_calls), `${(summary.turns ? summary.tool_calls / summary.turns : 0).toFixed(1)} per turn`),
+    statTile("Est. API cost", fmtUSD(summary.est_cost_usd), perAccount || "what this would cost on pay-as-you-go", "stat-tile-wide"),
+  ].join("");
+}
+
+// ---------- 5-hour windows ----------
+
+function renderWindows(windows) {
+  const el = document.getElementById("usage-windows");
+  if (!el) return;
+  if (!windows || !windows.length) {
+    el.innerHTML = `<div class="empty-state">No 5-hour windows observed for ${escapeHtml(scopeLabel())}. Windows appear once the poller has seen a reset deadline.</div>`;
+    return;
+  }
+  const byCost = state.usageWeight !== "tokens";
+  el.innerHTML = windows.map((w) => {
+    const sub = subById(w.subscription_id);
+    const color = getAccountColor(sub || w.subscription_id);
+    const shareKey = byCost ? "window_pct_by_cost" : "window_pct_by_tokens";
+    const models = (w.models || []).slice().sort((a, b) => b[shareKey] - a[shareKey]);
+    const segments = models.map((m) => `<div class="win-seg" style="width:${Math.max(0, Math.min(100, m[shareKey]))}%; background:${modelColor(m.model)}" title="${escapeHtml(m.model_label)} · ${fmtPct(m[shareKey])} of the window"></div>`).join("");
+    const unattributed = w.peak_pct > 0 && !models.length
+      ? `<div class="win-seg win-seg-unknown" style="width:${w.peak_pct}%" title="Utilisation with no matching local turns"></div>`
+      : "";
+    const rows = models.map((m) => {
+      const share = byCost ? m.share_cost : m.share_tokens;
+      return `
+        <div class="win-row">
+          <span class="win-dot" style="background:${modelColor(m.model)}"></span>
+          <span class="win-model">${escapeHtml(m.model_label)}</span>
+          <span class="win-pct">${fmtPct(m[shareKey])}<small> of window</small></span>
+          <span class="win-detail">${fmtPct(share * 100, 0)} of ${weightLabel()} · ${fmtInt(m.turns)} turns · ${fmtTokens(m.total_tokens)} tok</span>
+        </div>`;
+    }).join("");
+    const status = w.is_active
+      ? `<span class="win-status win-status-live">live · ${fmtPct(w.peak_pct, 0)} so far</span>`
+      : `<span class="win-status">peaked at ${fmtPct(w.peak_pct, 0)}</span>`;
+    const dateStr = getSelectedDateString();
+    const startLabel = dateStr ? fmtTime(w.starts_at) : fmtDateTime(w.starts_at);
+    return `
+      <div class="win-card" style="--account:${color.line}">
+        <div class="win-head">
+          <div class="win-title">
+            ${accountSwatch(w.subscription_id)}
+            <span class="win-range">${startLabel} → ${fmtTime(w.resets_at)}</span>
+          </div>
+          ${status}
+        </div>
+        <div class="win-bar" title="Peak 5-hour utilisation ${fmtPct(w.peak_pct, 0)}">
+          ${segments}${unattributed}
+        </div>
+        <div class="win-rows">
+          ${rows || `<div class="win-row win-row-empty">No local transcript turns fall inside this window.</div>`}
+        </div>
+        <div class="win-foot">${fmtInt(w.sessions)} sessions · ${fmtInt(w.turns)} turns · ${fmtTokens(w.total_tokens)} tokens · ${fmtUSD(w.est_cost_usd)} est. · ${fmtInt(w.readings)} readings</div>
+      </div>`;
+  }).join("");
+}
+
+// ---------- model mix ----------
+
+function renderModelMix(models) {
+  const bar = document.getElementById("usage-model-bar");
+  const table = document.getElementById("usage-model-table");
+  const caption = document.getElementById("usage-model-caption");
+  if (!bar || !table) return;
+  if (!models || !models.length) {
+    bar.innerHTML = "";
+    table.innerHTML = `<div class="empty-state">No turns in this range.</div>`;
+    if (caption) caption.textContent = "";
+    return;
+  }
+  const total = models.reduce((acc, m) => acc + weightOf(m), 0) || 1;
+  const sorted = models.slice().sort((a, b) => weightOf(b) - weightOf(a));
+  bar.innerHTML = sorted.map((m) => {
+    const pct = (weightOf(m) / total) * 100;
+    return `<div class="share-seg" style="width:${pct}%; background:${modelColor(m.model)}" title="${escapeHtml(m.model_label)} · ${fmtPct(pct)}"></div>`;
+  }).join("");
+  if (caption) caption.textContent = `Share of ${weightLabel()} · ${sorted[0].model_label} leads at ${fmtPct((weightOf(sorted[0]) / total) * 100, 0)}`;
+  table.innerHTML = `
+    <table class="usage-table">
+      <thead><tr><th>Model</th><th class="num">Share</th><th class="num">Turns</th><th class="num">Sessions</th><th class="num">Tokens</th><th class="num">Output</th><th class="num">Est. cost</th></tr></thead>
+      <tbody>
+        ${sorted.map((m) => `
+          <tr>
+            <td>${modelChip(m.model, m.model_label)}</td>
+            <td class="num strong">${fmtPct((weightOf(m) / total) * 100)}</td>
+            <td class="num">${fmtInt(m.turns)}</td>
+            <td class="num">${fmtInt(m.sessions)}</td>
+            <td class="num">${fmtTokens(m.total_tokens)}</td>
+            <td class="num">${fmtTokens(m.output_tokens)}</td>
+            <td class="num">${fmtUSD(m.est_cost_usd)}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+// ---------- cache ----------
+
+function renderCache(summary) {
+  const el = document.getElementById("usage-cache");
+  if (!el) return;
+  if (!summary || !summary.total_tokens) {
+    el.innerHTML = `<div class="empty-state">No turns in this range.</div>`;
+    return;
+  }
+  const rows = [
+    { label: "Cache reads", value: summary.cache_read_tokens, color: "#22d3ee", hint: "Context replayed from cache (cheapest)" },
+    { label: "Cache writes", value: summary.cache_creation_tokens, color: "#6366f1", hint: `${fmtTokens(summary.cache_1h_tokens)} with 1h TTL · ${fmtTokens(summary.cache_5m_tokens)} with 5m TTL` },
+    { label: "Fresh input", value: summary.input_tokens, color: "#f59e0b", hint: "Uncached prompt tokens" },
+    { label: "Output", value: summary.output_tokens, color: "#a855f7", hint: `${fmtTokens(summary.thinking_tokens)} thinking` },
+  ];
+  const total = rows.reduce((a, r) => a + (Number(r.value) || 0), 0) || 1;
+  el.innerHTML = `
+    <div class="share-bar">
+      ${rows.map((r) => `<div class="share-seg" style="width:${(r.value / total) * 100}%; background:${r.color}" title="${escapeHtml(r.label)} · ${fmtPct((r.value / total) * 100)}"></div>`).join("")}
+    </div>
+    <div class="cache-rows">
+      ${rows.map((r) => `
+        <div class="cache-row">
+          <span class="win-dot" style="background:${r.color}"></span>
+          <span class="cache-label">${escapeHtml(r.label)}</span>
+          <span class="cache-value">${fmtTokens(r.value)}</span>
+          <span class="cache-pct">${fmtPct((r.value / total) * 100)}</span>
+          <span class="cache-hint">${escapeHtml(r.hint)}</span>
+        </div>`).join("")}
+    </div>
+    <div class="cache-summary">
+      Each turn resent on average <strong>${fmtTokens(summary.turns ? summary.total_input_tokens / summary.turns : 0)}</strong> tokens of context and produced <strong>${fmtTokens(summary.turns ? summary.output_tokens / summary.turns : 0)}</strong>.
+      ${summary.cache_hit_ratio >= 0.9 ? "Caching is doing its job." : summary.cache_hit_ratio >= 0.7 ? "Decent caching; long pauses between turns let the cache expire." : "Low cache reuse: many turns are paying full price for their context."}
+    </div>`;
+}
+
+// ---------- timeline ----------
+
+function renderTimeline(rows, bucket) {
+  const canvas = document.getElementById("usageTimelineChart");
+  const caption = document.getElementById("usage-timeline-caption");
+  if (!canvas) return;
+  if (usageState.timelineChart) {
+    usageState.timelineChart.destroy();
+    usageState.timelineChart = null;
+  }
+  const byBucket = new Map();
+  const modelsSeen = new Map();
+  (rows || []).forEach((r) => {
+    if (!byBucket.has(r.bucket)) byBucket.set(r.bucket, {});
+    byBucket.get(r.bucket)[r.model] = weightOf(r);
+    modelsSeen.set(r.model, (modelsSeen.get(r.model) || 0) + weightOf(r));
+  });
+
+  // Fill empty buckets so quiet hours/days show as gaps rather than vanishing.
+  let labels = Array.from(byBucket.keys()).sort();
+  if (bucket === "hour") {
+    const dateStr = getSelectedDateString();
+    if (dateStr) {
+      labels = [];
+      for (let h = state.startHour; h <= state.endHour; h += 1) {
+        labels.push(`${dateStr}T${String(h).padStart(2, "0")}:00:00`);
+      }
+    }
+  } else if (labels.length > 1) {
+    const filled = [];
+    const start = new Date(`${labels[0]}T00:00:00`);
+    const end = new Date(`${labels[labels.length - 1]}T00:00:00`);
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) filled.push(getLocalDateString(d));
+    labels = filled;
+  }
+
+  const models = Array.from(modelsSeen.entries()).sort((a, b) => b[1] - a[1]).map(([m]) => m);
+  if (!models.length) {
+    if (caption) caption.textContent = `Nothing recorded for ${scopeLabel()}`;
+    return;
+  }
+  if (caption) caption.textContent = `${weightLabel()} per ${bucket}, stacked by model`;
+
+  const labelFor = (b) => {
+    if (bucket === "hour") {
+      const h = parseInt(b.slice(11, 13), 10);
+      return formatHourLabel(h);
+    }
+    const d = new Date(`${b}T00:00:00`);
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  };
+
+  const isTokens = state.usageWeight === "tokens";
+  usageState.timelineChart = new Chart(canvas.getContext("2d"), {
+    type: "bar",
+    data: {
+      labels: labels.map(labelFor),
+      datasets: models.map((m) => ({
+        label: pretty(m),
+        data: labels.map((b) => (byBucket.get(b) || {})[m] || 0),
+        backgroundColor: modelColor(m),
+        borderRadius: 3,
+        stack: "usage",
+      })),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 250 },
+      plugins: {
+        legend: { position: "bottom", labels: { color: "#94a3b8", boxWidth: 12, boxHeight: 12, padding: 14, font: { size: 11 } } },
+        tooltip: {
+          backgroundColor: "rgba(15, 19, 29, 0.95)",
+          borderColor: "rgba(255,255,255,0.1)",
+          borderWidth: 1,
+          callbacks: {
+            label: (ctx) => ` ${ctx.dataset.label}: ${isTokens ? fmtTokens(ctx.parsed.y) : fmtUSD(ctx.parsed.y)}`,
+            footer: (items) => {
+              const total = items.reduce((a, i) => a + (i.parsed.y || 0), 0);
+              return `Total: ${isTokens ? fmtTokens(total) : fmtUSD(total)}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { color: "#64748b", font: { size: 11 }, maxRotation: 0, autoSkip: true } },
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          grid: { color: "rgba(255,255,255,0.05)" },
+          ticks: { color: "#64748b", font: { size: 11 }, callback: (v) => (isTokens ? fmtTokens(v) : fmtUSD(v)) },
+        },
+      },
+    },
+  });
+}
+
+const PRETTY_CACHE = new Map();
+function pretty(model) {
+  if (PRETTY_CACHE.has(model)) return PRETTY_CACHE.get(model);
+  const row = (usageState.data && usageState.data.models || []).find((m) => m.model === model)
+    || (usageState.data && usageState.data.timeline || []).find((m) => m.model === model);
+  const label = row ? row.model_label : model;
+  PRETTY_CACHE.set(model, label);
+  return label;
+}
+
+// ---------- heatmap ----------
+
+function renderHeatmap(cells) {
+  const el = document.getElementById("usage-heatmap");
+  const caption = document.getElementById("usage-heatmap-caption");
+  if (!el) return;
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const grid = Array.from({ length: 7 }, () => Array(24).fill(0));
+  let max = 0;
+  let busiest = null;
+  (cells || []).forEach((c) => {
+    const v = weightOf(c);
+    grid[c.weekday][c.hour] = v;
+    if (v > max) {
+      max = v;
+      busiest = c;
+    }
+  });
+  if (!max) {
+    el.innerHTML = `<div class="empty-state">No activity to map.</div>`;
+    if (caption) caption.textContent = "";
+    return;
+  }
+  if (caption && busiest) caption.textContent = `Busiest: ${days[busiest.weekday]} ${formatHourLabel(busiest.hour)} · by ${weightLabel()}`;
+
+  // Monday-first display order.
+  const order = [1, 2, 3, 4, 5, 6, 0];
+  const hourHeader = Array.from({ length: 24 }, (_, h) => `<div class="hm-hour">${h % 3 === 0 ? formatHourLabel(h).replace(" ", "") : ""}</div>`).join("");
+  const body = order.map((d) => `
+    <div class="hm-day">${days[d]}</div>
+    ${grid[d].map((v, h) => {
+      const t = v / max;
+      const alpha = v ? 0.12 + Math.sqrt(t) * 0.78 : 0;
+      const inRange = getSelectedDateString() ? h >= state.startHour && h <= state.endHour : true;
+      return `<div class="hm-cell ${inRange ? "" : "hm-cell-out"}" style="background: rgba(99, 102, 241, ${alpha.toFixed(3)})" title="${days[d]} ${formatHourLabel(h)} · ${fmtWeight(v)}"></div>`;
+    }).join("")}`).join("");
+  el.innerHTML = `<div class="hm-grid"><div class="hm-corner"></div>${hourHeader}${body}</div>`;
+}
+
+// ---------- projects ----------
+
+function renderProjects(projects) {
+  const el = document.getElementById("usage-projects");
+  if (!el) return;
+  if (!projects || !projects.length) {
+    el.innerHTML = `<div class="empty-state">No projects in this range.</div>`;
+    return;
+  }
+  const max = Math.max(...projects.map(weightOf)) || 1;
+  el.innerHTML = `
+    <table class="usage-table">
+      <thead><tr><th>Project</th><th class="num">Sessions</th><th class="num">Turns</th><th class="num">Tokens</th><th class="num">Est. cost</th></tr></thead>
+      <tbody>
+        ${projects.map((p) => `
+          <tr title="${p.directories > 1 ? `${p.directories} working directories (worktrees) collapsed into this project` : ""}">
+            <td>
+              <div class="proj-name">${escapeHtml(p.project_name)}${p.directories > 1 ? `<span class="proj-dirs">${p.directories} worktrees</span>` : ""}</div>
+              <div class="proj-bar"><div style="width:${(weightOf(p) / max) * 100}%"></div></div>
+            </td>
+            <td class="num">${fmtInt(p.sessions)}</td>
+            <td class="num">${fmtInt(p.turns)}</td>
+            <td class="num">${fmtTokens(p.total_tokens)}</td>
+            <td class="num">${fmtUSD(p.est_cost_usd)}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+// ---------- sessions ----------
+
+function renderSessions(sessions) {
+  const el = document.getElementById("usage-sessions");
+  const caption = document.getElementById("usage-sessions-caption");
+  if (!el) return;
+  if (!sessions || !sessions.length) {
+    el.innerHTML = `<div class="empty-state">No sessions for ${escapeHtml(scopeLabel())}.</div>`;
+    if (caption) caption.textContent = "";
+    return;
+  }
+  const helpers = sessions.filter(isHelperSession).length;
+  const shown = usageState.hideHelperSessions ? sessions.filter((s) => !isHelperSession(s)) : sessions;
+  if (caption) {
+    caption.innerHTML = `${shown.length} of the ${sessions.length} most recent sessions in ${escapeHtml(scopeLabel())}` +
+      (helpers ? ` · <label class="inline-toggle"><input type="checkbox" ${usageState.hideHelperSessions ? "checked" : ""} onchange="toggleHelperSessions(this.checked)"> hide ${helpers} one-turn helper session${helpers === 1 ? "" : "s"}</label>` : "");
+  }
+  const dateStr = getSelectedDateString();
+  if (!shown.length) {
+    el.innerHTML = `<div class="empty-state">Only one-turn helper sessions in this range.</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <table class="usage-table sessions-table">
+      <thead>
+        <tr>
+          <th>Session</th><th>Account</th><th>Started</th><th class="num">Duration</th>
+          <th class="num">Turns</th><th class="num">Tools</th><th class="num">Tokens</th><th class="num">Output</th><th>Models</th><th class="num">Est. cost</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${shown.map((s) => {
+          const title = s.title || s.first_prompt || s.session_id.slice(0, 8);
+          const meta = [s.project_name, s.worktree, s.git_branch].filter(Boolean).join(" · ");
+          const modelsHtml = (s.models || []).slice(0, 3).map((m) => modelChip(m.model, `${m.model_label} ×${m.turns}`)).join("");
+          return `
+            <tr title="${escapeHtml(s.first_prompt || "")}\n${escapeHtml(s.session_id)}">
+              <td class="sess-cell">
+                <div class="sess-title">${escapeHtml(title)}</div>
+                <div class="sess-meta">${escapeHtml(meta)}</div>
+              </td>
+              <td>${accountSwatch(s.subscription_id)}</td>
+              <td class="nowrap">${dateStr ? fmtTime(s.started_at) : fmtDateTime(s.started_at)}</td>
+              <td class="num">${fmtDuration(s.duration_s)}</td>
+              <td class="num">${fmtInt(s.turns)}</td>
+              <td class="num">${fmtInt(s.tool_calls)}</td>
+              <td class="num">${fmtTokens(s.total_tokens)}</td>
+              <td class="num">${fmtTokens(s.output_tokens)}</td>
+              <td class="models-cell">${modelsHtml}</td>
+              <td class="num">${fmtUSD(s.est_cost_usd)}</td>
+            </tr>`;
+        }).join("")}
+      </tbody>
+    </table>`;
+}
