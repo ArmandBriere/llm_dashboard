@@ -54,7 +54,7 @@ suffix is `sha256(path)[:8]`, the same rule Claude Code uses. Cost estimates com
 Run the launcher script:
 
 ```bash
-./start.sh
+./start.sh          # or: make run
 ```
 
 Or start manually:
@@ -77,12 +77,15 @@ Open your browser at [http://127.0.0.1:8000](http://127.0.0.1:8000).
 To keep the collector polling continuously, install it as a user LaunchAgent:
 
 ```bash
-./service.sh install     # render the plist, load it, start now
-./service.sh status      # state / pid / last exit code
-./service.sh logs        # tail stdout + stderr
-./service.sh restart     # reload after a code change
-./service.sh uninstall   # stop and remove
+make install     # render the plist, load it, start now
+make status      # state / pid / last exit code
+make logs        # tail stdout + stderr
+make uninstall   # stop and remove
 ```
+
+Once it is installed, `make` on its own is the deploy: it fast-forwards the
+runtime checkout to `origin/main`, syncs dependencies, restarts the service and
+verifies it came back. `make help` lists every target.
 
 It starts at every login and restarts within ~10s if it crashes. Logs go to
 `~/Library/Logs/llm-dashboard/`.
@@ -133,6 +136,7 @@ llm_dashboard/
 │   ├── test_database.py    # Unit tests for database & event logic
 │   └── test_api.py         # Integration tests for FastAPI endpoints
 ├── requirements.txt
+├── Makefile                # `make` deploys to the running service; `make help`
 ├── start.sh                # Quick launch script (foreground, opens browser)
 ├── run-service.sh          # Service-mode launcher used by launchd
 ├── service.sh              # install / uninstall / restart / status / logs

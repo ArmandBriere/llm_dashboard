@@ -35,6 +35,7 @@ loads in a GUI login session.
 
 | File | Role |
 |---|---|
+| `Makefile` | Deploy entrypoint. `make` = sync + deps + restart + verify; wraps `service.sh` for day-to-day commands. |
 | `service.sh` | Management CLI: `install` / `uninstall` / `restart` / `status` / `logs`. |
 | `run-service.sh` | What launchd actually executes. Service-mode launcher: no browser, no TTY, bootstraps the venv, rotates logs. |
 | `com.armandbriere.llm-dashboard.plist.template` | Source of truth for the agent. `service.sh install` renders `__APP_DIR__` / `__HOME__` into the real plist. |
@@ -93,6 +94,10 @@ sleep 5 && ./service.sh status
 ./service.sh restart     # kickstart -k, after a code change
 ./service.sh uninstall   # bootout + remove the plist
 ```
+
+The `Makefile` wraps all of these (`make status` / `logs` / `restart` /
+`uninstall`), and adds `make stop` to unload the agent when you want the port
+free for a foreground `make run`.
 
 After changing anything under `backend/`, run `./service.sh restart`. The server
 is not started with `--reload`, so code changes are not picked up otherwise.

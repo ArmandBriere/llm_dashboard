@@ -48,12 +48,27 @@ Note the naming split, which is easy to mistype: the **repo directory** is
 ## Update procedure
 
 ```bash
+make
+```
+
+That is the whole deploy, and it works from any checkout — including a worktree,
+since every step targets `RUNTIME_DIR` (`~/src/llm_dashboard`) rather than
+`$PWD`. It runs `sync` -> `deps` -> `restart` -> `verify`, which is:
+
+```bash
 cd ~/src/llm_dashboard
 git fetch origin
 git status --short                                          # expect no output
 git merge --ff-only origin/main
 uv pip install -r requirements.txt --python .venv/bin/python
 ./service.sh restart
+```
+
+To deploy something other than `origin/main`, override `REF` — it still has to
+fast-forward from what the runtime currently has:
+
+```bash
+make REF=origin/my-branch
 ```
 
 Two deliberate choices in there:
@@ -80,6 +95,10 @@ so it is worth running unconditionally rather than remembering whether
 | `requirements.txt` | `uv pip install -r requirements.txt --python .venv/bin/python`, then restart. |
 | `run-service.sh` | `./service.sh restart`. |
 | `*.plist.template` | `./service.sh install` — it re-renders the plist. A restart alone reuses the old one. |
+
+`make` covers every row unconditionally: `make restart` diffs the rendered plist
+against the template and escalates to `service.sh install` when they differ, so
+you never have to remember which of the two a change needed.
 
 Frontend changes need no restart *and* no hard reload: `StaticFiles` re-reads
 from disk per request, and the `add_no_cache_headers` middleware in
@@ -112,11 +131,12 @@ a new title, a newly added `/static/*.js` returning `200`).
 ## Rollback
 
 ```bash
-cd ~/src/llm_dashboard
-git log --oneline -5
-git reset --hard <good-sha>
-./service.sh restart
+git -C ~/src/llm_dashboard log --oneline -5
+make rollback SHA=<good-sha>
 ```
+
+`rollback` resets the runtime to `SHA` and then re-runs `deps`, `restart` and
+`verify`, so a rollback is verified the same way a deploy is.
 
 `reset --hard` leaves the database alone — it is gitignored, so it is untracked
 as far as git is concerned.
