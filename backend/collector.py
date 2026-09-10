@@ -73,6 +73,7 @@ class QuotaCollector:
                         seven_day_resets_at=quota.get("seven_day_resets_at"),
                         scoped_model=quota.get("scoped_model"),
                         scoped_pct=quota.get("scoped_pct"),
+                        scoped_resets_at=quota.get("scoped_resets_at"),
                         spend_used=quota.get("spend_used"),
                         spend_limit=quota.get("spend_limit"),
                         spend_currency=quota.get("spend_currency"),

@@ -40,6 +40,7 @@ class BaseProvider(ABC):
                 "seven_day_resets_at": str | None,
                 "scoped_model": str | None,
                 "scoped_pct": float | None,
+                "scoped_resets_at": str | None,
                 "spend_used": float | None,
                 "spend_limit": float | None,
                 "spend_currency": str | None,

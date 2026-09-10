@@ -377,6 +377,7 @@ class ClaudeCodeProvider(BaseProvider):
             seven_day_resets_at = None
             scoped_model = None
             scoped_pct = None
+            scoped_resets_at = None
             spend_used = None
             spend_limit = None
             spend_currency = None
@@ -391,6 +392,7 @@ class ClaudeCodeProvider(BaseProvider):
                         model_name = lim.get("scope", {}).get("model", {}).get("display_name")
                         scoped_model = model_name
                         scoped_pct = lim.get("percent")
+                        scoped_resets_at = lim.get("resets_at")
                         break
 
                 # Spend
@@ -422,6 +424,7 @@ class ClaudeCodeProvider(BaseProvider):
                     "seven_day_resets_at": seven_day_resets_at,
                     "scoped_model": scoped_model,
                     "scoped_pct": scoped_pct,
+                    "scoped_resets_at": scoped_resets_at,
                     "spend_used": spend_used,
                     "spend_limit": spend_limit,
                     "spend_currency": spend_currency,

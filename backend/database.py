@@ -55,6 +55,7 @@ def get_db(db_path: Path | str | None = None) -> Generator[sqlite3.Connection, N
                 seven_day_resets_at TEXT,
                 scoped_model TEXT,
                 scoped_pct REAL,
+                scoped_resets_at TEXT,
                 spend_used REAL,
                 spend_limit REAL,
                 spend_currency TEXT,
@@ -109,6 +110,7 @@ def init_db(db_path: Path | str | None = None) -> None:
                 seven_day_resets_at TEXT,
                 scoped_model TEXT,
                 scoped_pct REAL,
+                scoped_resets_at TEXT,
                 spend_used REAL,
                 spend_limit REAL,
                 spend_currency TEXT,
@@ -140,6 +142,8 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(quota_snapshots)")}
     if "is_stale" not in existing:
         conn.execute("ALTER TABLE quota_snapshots ADD COLUMN is_stale INTEGER DEFAULT 0")
+    if "scoped_resets_at" not in existing:
+        conn.execute("ALTER TABLE quota_snapshots ADD COLUMN scoped_resets_at TEXT")
 
 
 def upsert_subscription(
@@ -269,6 +273,7 @@ def get_subscriptions(db_path: Path | str | None = None) -> list[dict[str, Any]]
                 snap_dict = dict(latest)
                 snap_dict["five_hour_countdown"] = format_countdown(snap_dict.get("five_hour_resets_at"))
                 snap_dict["seven_day_countdown"] = format_countdown(snap_dict.get("seven_day_resets_at"))
+                snap_dict["scoped_countdown"] = format_countdown(snap_dict.get("scoped_resets_at"))
                 # A reading whose own reset moment has passed describes a window
                 # that no longer exists, so its percentages are not current.
                 snap_dict["is_expired"] = has_passed(snap_dict.get("five_hour_resets_at"))
@@ -378,6 +383,7 @@ def insert_snapshot(
     seven_day_resets_at: str | None,
     scoped_model: str | None = None,
     scoped_pct: float | None = None,
+    scoped_resets_at: str | None = None,
     spend_used: float | None = None,
     spend_limit: float | None = None,
     spend_currency: str | None = None,
@@ -398,8 +404,9 @@ def insert_snapshot(
             INSERT INTO quota_snapshots (
                 subscription_id, timestamp, five_hour_pct, five_hour_resets_at,
                 seven_day_pct, seven_day_resets_at, scoped_model, scoped_pct,
-                spend_used, spend_limit, spend_currency, is_stale, raw_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                scoped_resets_at, spend_used, spend_limit, spend_currency,
+                is_stale, raw_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 subscription_id,
@@ -410,6 +417,7 @@ def insert_snapshot(
                 seven_day_resets_at,
                 scoped_model,
                 scoped_pct,
+                scoped_resets_at,
                 spend_used,
                 spend_limit,
                 spend_currency,
