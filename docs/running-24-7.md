@@ -97,6 +97,10 @@ sleep 5 && ./service.sh status
 After changing anything under `backend/`, run `./service.sh restart`. The server
 is not started with `--reload`, so code changes are not picked up otherwise.
 
+For pulling merged code into the running service — which checkout launchd
+serves, what needs a restart versus a plain browser reload, verification and
+rollback — see [deploying.md](deploying.md).
+
 ---
 
 ## Configuration

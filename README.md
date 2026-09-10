@@ -96,6 +96,10 @@ The main caveat is sleep: a sleeping Mac leaves gaps in the timeline.
 **See [docs/running-24-7.md](docs/running-24-7.md)** for the full runbook:
 configuration, log rotation, sleep mitigations, and troubleshooting.
 
+**See [docs/deploying.md](docs/deploying.md)** for how merged code reaches the
+running service: which checkout launchd actually serves, what needs a restart,
+how to verify, and how to roll back without destroying the quota history.
+
 ---
 
 ## API Endpoints
