@@ -26,6 +26,12 @@ from typing import Any, Iterable
 
 from backend.database import RESET_WINDOW_TOLERANCE_S, get_db
 from backend.pricing import estimate_cost_usd, pretty_model_name
+from backend.skills import (
+    SKILLS_SCHEMA,
+    SkillRecorder,
+    delete_file_rows,
+    get_session_skills,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +52,7 @@ CREATE TABLE IF NOT EXISTS usage_files (
     size INTEGER NOT NULL DEFAULT 0,
     mtime REAL NOT NULL DEFAULT 0,
     offset INTEGER NOT NULL DEFAULT 0,
+    scan_version INTEGER NOT NULL DEFAULT 0,
     last_scanned_at TEXT
 );
 
@@ -89,11 +96,19 @@ CREATE TABLE IF NOT EXISTS usage_sessions (
     first_prompt TEXT,
     first_prompt_at TEXT
 );
-"""
+""" + SKILLS_SCHEMA
+
+# Bumped whenever a scan extracts something new from lines it has already read.
+# A transcript indexed by an older version is re-read from the start, after its
+# derived rows are dropped, so history survives even for files since deleted.
+SCAN_VERSION = 2
 
 
 def _migrate_usage_schema(conn: sqlite3.Connection) -> None:
     """Add columns introduced after the usage tables were first created."""
+    file_cols = {r["name"] for r in conn.execute("PRAGMA table_info(usage_files)")}
+    if "scan_version" not in file_cols:
+        conn.execute("ALTER TABLE usage_files ADD COLUMN scan_version INTEGER NOT NULL DEFAULT 0")
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(usage_turns)")}
     if "project" not in cols:
         conn.execute("ALTER TABLE usage_turns ADD COLUMN project TEXT")
@@ -338,7 +353,9 @@ def _scan_file(
     except ValueError:
         project_slug = path.parent.name
         session_id = path.stem
-    row = conn.execute("SELECT id, size, offset FROM usage_files WHERE path = ?", (str(path),)).fetchone()
+    row = conn.execute(
+        "SELECT id, size, offset, scan_version FROM usage_files WHERE path = ?", (str(path),)
+    ).fetchone()
     if row is None:
         cur = conn.execute(
             "INSERT INTO usage_files (path, account_key, project_slug, session_id, size, mtime, offset) VALUES (?,?,?,?,0,0,0)",
@@ -349,13 +366,17 @@ def _scan_file(
     else:
         file_id = row["id"]
         offset = row["offset"]
-        if stat.st_size == row["size"] and offset >= stat.st_size:
+        stale_version = (row["scan_version"] or 0) < SCAN_VERSION
+        if stat.st_size == row["size"] and offset >= stat.st_size and not stale_version:
             return 0
-        if stat.st_size < offset:
-            # Truncated or rewritten: start over for this file.
+        if stat.st_size < offset or stale_version:
+            # Truncated, rewritten, or indexed by a scanner that read less out
+            # of each line than this one does: start over for this file.
             conn.execute("DELETE FROM usage_turns WHERE file_id = ?", (file_id,))
+            delete_file_rows(conn, file_id)
             offset = 0
 
+    recorder = SkillRecorder(conn, file_id, account_key, subscription_id)
     acc = _TurnAccumulator()
     titles: dict[str, str] = {}
     first_prompt: tuple[str, str | None] | None = None
@@ -382,6 +403,9 @@ def _scan_file(
                     continue
                 if rec.get("type") == "assistant":
                     acc.add(rec, account_key, subscription_id)
+                    ts = _normalize_ts(rec.get("timestamp"))
+                    if ts:
+                        recorder.add_assistant(rec, ts)
             elif b'"ai-title"' in line:
                 try:
                     rec = json.loads(line)
@@ -389,18 +413,28 @@ def _scan_file(
                     continue
                 if rec.get("type") == "ai-title" and rec.get("aiTitle"):
                     titles[rec.get("sessionId") or session_id] = str(rec["aiTitle"])[:200]
-            elif not have_prompt and first_prompt is None and b'"user"' in line and b"tool_result" not in line:
+            elif b'"user"' in line:
+                # User records answer skill launches and carry the instructions
+                # a skill injected; the first human one titles the session.
+                is_skill_record = b'"tool_result"' in line or b"Base directory for this skill" in line
+                wants_prompt = not have_prompt and first_prompt is None and b"tool_result" not in line
+                if not is_skill_record and not wants_prompt:
+                    continue
                 try:
                     rec = json.loads(line)
                 except ValueError:
                     continue
-                if rec.get("type") != "user" or rec.get("isMeta") or rec.get("isSidechain"):
+                if rec.get("type") != "user":
                     continue
-                text = _first_user_text(rec.get("message") or {})
-                if text:
-                    first_prompt = (text, _normalize_ts(rec.get("timestamp")))
+                if is_skill_record:
+                    recorder.add_user(rec)
+                if wants_prompt and not rec.get("isMeta") and not rec.get("isSidechain"):
+                    text = _first_user_text(rec.get("message") or {})
+                    if text:
+                        first_prompt = (text, _normalize_ts(rec.get("timestamp")))
 
     written = _upsert_turns(conn, file_id, acc.turns.values())
+    recorder.flush()
 
     project_dir = next((t["project_dir"] for t in acc.turns.values() if t.get("project_dir")), None)
     if titles or first_prompt or written:
@@ -425,8 +459,8 @@ def _scan_file(
         )
 
     conn.execute(
-        "UPDATE usage_files SET size = ?, mtime = ?, offset = ?, last_scanned_at = ? WHERE id = ?",
-        (stat.st_size, stat.st_mtime, offset, datetime.now(timezone.utc).isoformat(), file_id),
+        "UPDATE usage_files SET size = ?, mtime = ?, offset = ?, scan_version = ?, last_scanned_at = ? WHERE id = ?",
+        (stat.st_size, stat.st_mtime, offset, SCAN_VERSION, datetime.now(timezone.utc).isoformat(), file_id),
     )
     return written
 
@@ -435,7 +469,13 @@ def scan_transcripts(user_home: Path | None = None, db_path: Path | str | None =
     """Incrementally ingest every transcript from every Claude home directory."""
     started = time.monotonic()
     homes = discover_claude_homes(user_home)
-    summary: dict[str, Any] = {"homes": [h.name for h in homes], "files_scanned": 0, "turns_written": 0}
+    summary: dict[str, Any] = {
+        "homes": [h.name for h in homes],
+        "files_scanned": 0,
+        "turns_written": 0,
+        "reindexed_files": 0,
+        "scan_version": SCAN_VERSION,
+    }
 
     with get_db(db_path) as conn:
         conn.executescript(USAGE_SCHEMA)
@@ -450,8 +490,8 @@ def scan_transcripts(user_home: Path | None = None, db_path: Path | str | None =
                 )
 
         known = {
-            r["path"]: (r["size"], r["mtime"])
-            for r in conn.execute("SELECT path, size, mtime FROM usage_files").fetchall()
+            r["path"]: (r["size"], r["mtime"], r["scan_version"] or 0)
+            for r in conn.execute("SELECT path, size, mtime, scan_version FROM usage_files").fetchall()
         }
         for home in homes:
             for path in (home / "projects").rglob("*.jsonl"):
@@ -460,8 +500,10 @@ def scan_transcripts(user_home: Path | None = None, db_path: Path | str | None =
                 except FileNotFoundError:
                     continue
                 prev = known.get(str(path))
-                if prev and prev[0] == st.st_size and abs(prev[1] - st.st_mtime) < 1e-6:
+                if prev and prev[0] == st.st_size and abs(prev[1] - st.st_mtime) < 1e-6 and prev[2] >= SCAN_VERSION:
                     continue
+                if prev and prev[2] < SCAN_VERSION:
+                    summary["reindexed_files"] += 1
                 summary["turns_written"] += _scan_file(conn, path, home.name, account_map.get(home.name))
                 summary["files_scanned"] += 1
                 conn.commit()
@@ -623,6 +665,7 @@ def get_usage_sessions(
             """,
             [*params, *ids],
         ).fetchall()
+        session_skills = get_session_skills(ids, conn)
     by_session: dict[str, list[dict[str, Any]]] = {}
     for m in models:
         by_session.setdefault(m["session_id"], []).append(
@@ -630,6 +673,7 @@ def get_usage_sessions(
         )
     for s in sessions:
         m = meta.get(s["session_id"], {})
+        s["skills"] = session_skills.get(s["session_id"], [])
         s["title"] = m.get("title")
         s["first_prompt"] = m.get("first_prompt")
         s["models"] = sorted(by_session.get(s["session_id"], []), key=lambda x: -x["est_cost_usd"])

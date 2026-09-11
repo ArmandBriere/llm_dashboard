@@ -8,11 +8,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
-  <link rel="stylesheet" href="/static/style.css?v=6.0">
+  <link rel="stylesheet" href="/static/style.css?v=6.1">
 
   <!-- Applies the saved theme before first paint, so the page never flashes
        the default one. -->
-  <script src="/static/theme.js?v=6.0"></script>
+  <script src="/static/theme.js?v=6.1"></script>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
@@ -245,6 +245,33 @@
 
         <div class="block">
           <div class="block-head">
+            <h3>Skills</h3>
+            <span class="block-meta" id="usage-skills-caption"></span>
+          </div>
+          <div id="usage-skills-stats" class="stats stats-tight"></div>
+          <div id="usage-skills" class="table-wrap"></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="block">
+            <div class="block-head">
+              <h3>Plugins</h3>
+              <span class="block-meta" id="usage-plugins-caption"></span>
+            </div>
+            <div id="usage-plugins" class="table-wrap"></div>
+          </div>
+
+          <div class="block">
+            <div class="block-head">
+              <h3>Tools</h3>
+              <span class="block-meta" id="usage-tools-caption"></span>
+            </div>
+            <div id="usage-tools"></div>
+          </div>
+        </div>
+
+        <div class="block">
+          <div class="block-head">
             <h3>Sessions</h3>
             <span class="block-meta" id="usage-sessions-caption"></span>
           </div>
@@ -261,7 +288,7 @@
   <span>LLM Quota Tracker v1.2</span>
 </footer>
 
-<script src="/static/app.js?v=6.0"></script>
-<script src="/static/usage.js?v=6.0"></script>
+<script src="/static/app.js?v=6.1"></script>
+<script src="/static/usage.js?v=6.1"></script>
 </body>
 </html>

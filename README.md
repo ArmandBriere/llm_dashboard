@@ -12,11 +12,40 @@ Below the quota chart the dashboard analyses your local Claude Code transcripts
 (`~/.claude*/projects/**/*.jsonl`). Each assistant turn there records the model and
 the exact token usage the API returned, which the OAuth usage endpoint does not
 expose. The collector indexes new lines incrementally every poll (a cold scan of
-~1,100 transcripts takes about 3 s) into `usage_turns`, and the section shows:
+~1,250 transcripts takes about 10 s) into `usage_turns`, `usage_tool_calls` and
+`usage_skill_invocations`, and the section shows:
 
 - **Stat tiles**: sessions, turns, tokens, output/thinking share, cache hit rate, tool calls, estimated API-equivalent cost per account.
 - **5-hour windows**: every reset window the poller observed, with each model's share of the window's peak utilisation (share of estimated cost or raw tokens × peak %).
-- **Model mix**, **cache & output** breakdown, **activity over time** (stacked by model), a **weekday × hour heatmap**, **projects** and a **sessions** table (title, project, branch, duration, turns, tools, tokens, models, cost).
+- **Model mix**, **cache & output** breakdown, **activity over time** (stacked by model), a **weekday × hour heatmap** and **projects**.
+- **Skills**: every `Skill` invocation, which plugin and plugin version it came
+  from, how many invocations failed, how much instruction text it injects, and
+  the work it then drove.
+- **Plugins**: the same rolled up per plugin, plus the calls made to the MCP
+  servers that plugin ships.
+- **Tools**: the tool-call leaderboard split into builtin / MCP / skill / subagent.
+- **Sessions**: title, project, branch, duration, turns, tools, tokens, models,
+  the skills that session invoked, and cost.
+
+### How skills are measured
+
+A skill has no token usage of its own, so three different numbers are reported
+and they mean different things:
+
+- **Runs** counts `Skill` tool calls. A run that comes back `Unknown skill`
+  is counted and flagged, but attributed no work.
+- **Context** is the instruction text the skill injects each time it loads,
+  estimated at four characters per token. The transcript records no token count
+  for it, and it is the one cost a skill imposes directly. (The bundled
+  `claude-api` skill injects ~142k tokens; most plugin skills inject 1k–7k.)
+- **Turns / tokens / cost** are the work done *after* the skill loaded. Each
+  turn counts for the skill most recently loaded in its own transcript, so the
+  rows partition the window instead of double-counting sessions that load
+  several skills. The walk follows the transcript rather than the session
+  because a subagent writes its own file under the parent's session id.
+
+Plugin provenance (marketplace, plugin, version) is read from the directory the
+skill was loaded from, which is the only place the transcript records it.
 
 Account attribution uses the Claude home directory: `~/.claude` maps to the default
 keychain entry and any other `~/.claude_*` directory maps to the keychain entry whose
@@ -111,6 +140,9 @@ how to verify, and how to roll back without destroying the quota history.
 - `GET /api/snapshots?subscription_ids=1,2&date=2026-09-08&start_hour=7&end_hour=21`: Query historical snapshots filtered by account, date, and hour range.
 - `GET /api/events?subscription_ids=1&limit=50`: Get detected reset and refresh events.
 - `POST /api/refresh`: Trigger an immediate live collection pass across all accounts.
+- `GET /api/usage/skills`: Per-skill and per-plugin invocations, injected context and attributed tokens.
+- `GET /api/usage/tools`: Tool-call leaderboard with totals per tool kind and MCP server.
+- `GET /api/usage/skill-timeline?bucket=day`: Skill invocations per hour or day.
 - `GET /api/status`: Check collector health and next scheduled poll.
 
 ---
@@ -122,6 +154,9 @@ llm_dashboard/
 ├── backend/
 │   ├── database.py         # SQLite schema, snapshot logger, reset event detector
 │   ├── collector.py        # 5-minute background polling loop
+│   ├── usage.py            # Transcript scanner and token/session aggregates
+│   ├── skills.py           # Skill, plugin and tool extraction and attribution
+│   ├── pricing.py          # Model price table for the cost estimate
 │   ├── main.py             # FastAPI application and API routes
 │   └── providers/
 │       ├── base.py         # Abstract BaseProvider interface
@@ -134,6 +169,8 @@ llm_dashboard/
 │   └── usage.js            # Claude Code usage insights parsed from local transcripts
 ├── tests/
 │   ├── test_database.py    # Unit tests for database & event logic
+│   ├── test_usage.py       # Transcript scanner and aggregate tests
+│   ├── test_skills.py      # Skill/plugin extraction and attribution tests
 │   └── test_api.py         # Integration tests for FastAPI endpoints
 ├── requirements.txt
 ├── Makefile                # `make` deploys to the running service; `make help`

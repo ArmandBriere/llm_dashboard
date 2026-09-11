@@ -1,6 +1,7 @@
 /**
  * Claude Code usage insights: model mix, 5-hour window attribution, cache
- * efficiency, activity timeline, weekday/hour heatmap, projects and sessions.
+ * efficiency, activity timeline, weekday/hour heatmap, projects, skills,
+ * plugins, tools and sessions.
  * Data comes from /api/usage/* (parsed local transcripts) and follows the same
  * account / date / hour filters as the quota chart. Depends on app.js for
  * state, account colours and helpers.
@@ -193,7 +194,7 @@ async function loadUsage() {
   usageState.loading = true;
   try {
     const bucket = getSelectedDateString() ? "hour" : "day";
-    const [summary, models, windows, timeline, heatmap, projects, sessions] = await Promise.all([
+    const [summary, models, windows, timeline, heatmap, projects, sessions, skills, tools] = await Promise.all([
       fetchJson(`/api/usage/summary?${usageQuery()}`),
       fetchJson(`/api/usage/models?${usageQuery()}`),
       fetchJson(`/api/usage/windows?${usageQuery({ limit: 12 })}`),
@@ -201,8 +202,10 @@ async function loadUsage() {
       fetchJson(`/api/usage/heatmap?${usageQuery()}`),
       fetchJson(`/api/usage/projects?${usageQuery({ limit: 12 })}`),
       fetchJson(`/api/usage/sessions?${usageQuery({ limit: 80 })}`),
+      fetchJson(`/api/usage/skills?${usageQuery()}`),
+      fetchJson(`/api/usage/tools?${usageQuery({ limit: 14 })}`),
     ]);
-    usageState.data = { summary, models, windows, timeline, heatmap, projects, sessions, bucket };
+    usageState.data = { summary, models, windows, timeline, heatmap, projects, sessions, skills, tools, bucket };
     renderUsage(usageState.data);
   } catch (err) {
     console.error("Failed to load usage insights:", err);
@@ -222,6 +225,9 @@ function renderUsage(data) {
   renderTimeline(data.timeline, data.bucket);
   renderHeatmap(data.heatmap);
   renderProjects(data.projects);
+  renderSkills(data.skills);
+  renderPlugins(data.skills);
+  renderTools(data.tools);
   renderSessions(data.sessions);
 }
 
@@ -599,6 +605,218 @@ function renderProjects(projects) {
     </table>`;
 }
 
+// ---------- skills, plugins and tools ----------
+
+/**
+ * One hue per plugin, taken from the same theme palette as the models so the
+ * page reads as one system. Assigned on first sight and kept for the session.
+ */
+const pluginSlot = new Map();
+
+function pluginColor(name) {
+  const palette = tokens().models;
+  const wheel = [palette.opus, palette.sonnet, palette.fable, palette.haiku, palette.opusAlt, palette.sonnetAlt, palette.fableAlt, ...palette.spare];
+  if (!pluginSlot.has(name)) pluginSlot.set(name, pluginSlot.size % wheel.length);
+  return wheel[pluginSlot.get(name)];
+}
+
+function skillChip(row, extra = "") {
+  const color = pluginColor(row.plugin || "(none)");
+  const label = row.plugin ? `${row.plugin}:${row.skill_name}` : row.skill_name || row.skill;
+  return `<span class="model-chip" style="--model:${color}">${escapeHtml(label)}${extra}</span>`;
+}
+
+// Where a skill came from, spelled out for the source column.
+const SKILL_SOURCE_LABEL = {
+  plugin: "plugin",
+  personal: "personal",
+  project: "project",
+  bundled: "bundled",
+  unknown: "—",
+};
+
+function renderSkills(data) {
+  const statsEl = document.getElementById("usage-skills-stats");
+  const el = document.getElementById("usage-skills");
+  const caption = document.getElementById("usage-skills-caption");
+  if (!el) return;
+  const skills = (data && data.skills) || [];
+  const totals = (data && data.totals) || {};
+  if (!skills.length) {
+    if (statsEl) statsEl.innerHTML = "";
+    if (caption) caption.textContent = "";
+    el.innerHTML = `<div class="empty-state">No skill was invoked in ${escapeHtml(scopeLabel())}.</div>`;
+    return;
+  }
+
+  const attributed = totals.attributed || {};
+  const unattributed = totals.unattributed || {};
+  const totalWeight = weightOf(attributed) + weightOf(unattributed);
+  const share = totalWeight ? (weightOf(attributed) / totalWeight) * 100 : 0;
+  const perRun = totals.invocations ? weightOf(attributed) / totals.invocations : 0;
+
+  if (caption) {
+    caption.textContent = `${fmtInt(totals.invocations)} invocations of ${fmtInt(totals.distinct_skills)} skills` +
+      (totals.errors ? ` · ${fmtInt(totals.errors)} failed to load` : "");
+  }
+  if (statsEl) {
+    statsEl.innerHTML = [
+      statTile("Invocations", fmtInt(totals.invocations), `${fmtInt(totals.distinct_skills)} skills from ${fmtInt(totals.distinct_plugins)} plugins`),
+      statTile("Sessions with a skill", fmtInt(totals.sessions_with_skills), `of ${fmtInt(totals.sessions_total)} sessions in range`),
+      statTile("Context injected", fmtTokens(totals.payload_tokens), `≈${fmtTokens(totals.invocations ? totals.payload_tokens / totals.invocations : 0)} per load, estimated`),
+      statTile("Attributed work", fmtWeight(weightOf(attributed)), `${fmtPct(share, 0)} of ${weightLabel()} · ${fmtWeight(perRun)} per invocation`),
+    ].join("");
+  }
+
+  const max = Math.max(...skills.map((s) => weightOf(skillWeightRow(s)))) || 1;
+  el.innerHTML = `
+    <table class="usage-table">
+      <thead>
+        <tr>
+          <th>Skill</th><th>Source</th><th class="num">Runs</th><th class="num">Sessions</th>
+          <th class="num">Context</th><th class="num">Turns</th><th class="num">Tokens</th><th class="num">Est. cost</th><th class="num">Per run</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${skills.map((s) => {
+          const w = weightOf(skillWeightRow(s));
+          const version = s.latest_version
+            ? ` <span class="skill-version">v${escapeHtml(s.latest_version)}${s.version_count > 1 ? ` <small>+${s.version_count - 1}</small>` : ""}</span>`
+            : "";
+          const failed = s.errors ? `<span class="skill-fail" title="${s.errors} invocation(s) failed to load">${s.errors} failed</span>` : "";
+          return `
+            <tr title="${escapeHtml(s.skill)}\nlast used ${escapeHtml(fmtDateTime(s.last_used))}">
+              <td>
+                <div class="skill-name">${skillChip(s)}${failed}</div>
+                <div class="proj-bar"><div style="width:${(w / max) * 100}%; background:${pluginColor(s.plugin || "(none)")}"></div></div>
+              </td>
+              <td class="skill-source">${escapeHtml(SKILL_SOURCE_LABEL[s.source] || s.source || "—")}${version}</td>
+              <td class="num strong">${fmtInt(s.invocations)}</td>
+              <td class="num">${fmtInt(s.sessions)}</td>
+              <td class="num" title="Estimated tokens of instructions this skill injects each time it loads">${s.payload_tokens_each ? fmtTokens(s.payload_tokens_each) : "–"}</td>
+              <td class="num">${fmtInt(s.attributed_turns)}</td>
+              <td class="num">${fmtTokens(s.attributed_tokens)}</td>
+              <td class="num">${fmtUSD(s.attributed_cost_usd)}</td>
+              <td class="num">${fmtWeight(s.invocations ? w / s.invocations : 0)}</td>
+            </tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+    <p class="table-note">
+      Turns, tokens and cost are the work done <em>after</em> a skill loaded: each turn counts for the
+      skill most recently loaded in its transcript, so the rows partition the window rather than
+      double-counting sessions that load several skills. Context is the instruction text the skill
+      injects, estimated at four characters per token.
+      ${unattributed.turns ? `${fmtInt(unattributed.turns)} turns (${fmtWeight(weightOf(unattributed))}) ran with no skill loaded.` : ""}
+    </p>`;
+}
+
+// The attribution fields are named differently from the model/project rows, so
+// weightOf() gets the shape it expects.
+function skillWeightRow(s) {
+  return { total_tokens: s.attributed_tokens, est_cost_usd: s.attributed_cost_usd };
+}
+
+function renderPlugins(data) {
+  const el = document.getElementById("usage-plugins");
+  const caption = document.getElementById("usage-plugins-caption");
+  if (!el) return;
+  const plugins = (data && data.plugins) || [];
+  if (!plugins.length) {
+    el.innerHTML = `<div class="empty-state">No plugin activity in this range.</div>`;
+    if (caption) caption.textContent = "";
+    return;
+  }
+  if (caption) caption.textContent = `skills and MCP tools, by ${weightLabel()}`;
+  const max = Math.max(...plugins.map((p) => weightOf(skillWeightRow(p)))) || 1;
+  el.innerHTML = `
+    <table class="usage-table">
+      <thead><tr><th>Plugin</th><th class="num">Skills</th><th class="num">Runs</th><th class="num">MCP calls</th><th class="num">Tokens</th><th class="num">Est. cost</th></tr></thead>
+      <tbody>
+        ${plugins.map((p) => {
+          const w = weightOf(skillWeightRow(p));
+          const servers = p.mcp_servers.map((m) => `${m.server} ×${fmtInt(m.calls)}`).join(", ");
+          const meta = [
+            p.latest_version ? `v${p.latest_version}` : null,
+            p.marketplace,
+            servers || null,
+          ].filter(Boolean).join(" · ");
+          return `
+            <tr>
+              <td>
+                <div class="skill-name">
+                  <span class="model-chip" style="--model:${pluginColor(p.plugin)}">${escapeHtml(p.plugin)}</span>
+                </div>
+                ${meta ? `<div class="sess-meta">${escapeHtml(meta)}</div>` : ""}
+                <div class="proj-bar"><div style="width:${(w / max) * 100}%; background:${pluginColor(p.plugin)}"></div></div>
+              </td>
+              <td class="num">${fmtInt(p.skill_count)}</td>
+              <td class="num strong">${fmtInt(p.invocations)}</td>
+              <td class="num">${p.mcp_calls ? fmtInt(p.mcp_calls) : "–"}</td>
+              <td class="num">${fmtTokens(p.attributed_tokens)}</td>
+              <td class="num">${fmtUSD(p.attributed_cost_usd)}</td>
+            </tr>`;
+        }).join("")}
+      </tbody>
+    </table>`;
+}
+
+// Tool kinds share the model palette: one hue each, fixed so the bar keeps its
+// reading between refreshes.
+const TOOL_KIND_SLOT = { builtin: "opus", mcp: "sonnet", skill: "fable", agent: "haiku" };
+const TOOL_KIND_HINT = {
+  builtin: "shipped with Claude Code",
+  mcp: "from an MCP server",
+  skill: "Skill tool invocations",
+  agent: "subagents launched",
+};
+
+function renderTools(data) {
+  const el = document.getElementById("usage-tools");
+  const caption = document.getElementById("usage-tools-caption");
+  if (!el) return;
+  const tools = (data && data.tools) || [];
+  if (!tools.length) {
+    el.innerHTML = `<div class="empty-state">No tool calls in this range.</div>`;
+    if (caption) caption.textContent = "";
+    return;
+  }
+  const palette = tokens().models;
+  const kinds = data.kinds || [];
+  const total = data.total_calls || 1;
+  if (caption) caption.textContent = `${fmtInt(total)} calls · ${tools.length} busiest tools`;
+
+  const max = Math.max(...tools.map((t) => t.calls)) || 1;
+  el.innerHTML = `
+    <div class="share-bar">
+      ${kinds.map((k) => `<div class="share-seg" style="width:${(k.calls / total) * 100}%; background:${palette[TOOL_KIND_SLOT[k.tool_kind]] || palette.spare[0]}" title="${escapeHtml(k.tool_kind)} · ${fmtInt(k.calls)} calls"></div>`).join("")}
+    </div>
+    <div class="cache-rows">
+      ${kinds.map((k) => `
+        <div class="cache-row">
+          <span class="dot" style="background:${palette[TOOL_KIND_SLOT[k.tool_kind]] || palette.spare[0]}"></span>
+          <span class="cache-label">${escapeHtml(k.tool_kind)}</span>
+          <span class="cache-value">${fmtInt(k.calls)}</span>
+          <span class="cache-pct">${fmtPct((k.calls / total) * 100)}</span>
+          <span class="cache-hint">${escapeHtml(`${k.tools} distinct · ${TOOL_KIND_HINT[k.tool_kind] || ""}`)}</span>
+        </div>`).join("")}
+    </div>
+    <div class="tool-list">
+      ${tools.map((t) => `
+        <div class="tool-row" title="${escapeHtml(t.tool_name)}${t.server ? `\nserver: ${escapeHtml(t.server)}` : ""}">
+          <span class="tool-name">${escapeHtml(toolLabel(t))}</span>
+          <span class="tool-bar"><i style="width:${(t.calls / max) * 100}%; background:${palette[TOOL_KIND_SLOT[t.tool_kind]] || palette.spare[0]}"></i></span>
+          <span class="tool-count">${fmtInt(t.calls)}</span>
+        </div>`).join("")}
+    </div>`;
+}
+
+function toolLabel(t) {
+  if (t.tool_kind !== "mcp") return t.tool_name;
+  const short = t.tool_name.split("__").pop();
+  return `${t.plugin ? `${t.plugin}/` : ""}${t.server}: ${short}`;
+}
+
 // ---------- sessions ----------
 
 function renderSessions(sessions) {
@@ -626,7 +844,7 @@ function renderSessions(sessions) {
       <thead>
         <tr>
           <th>Session</th><th>Account</th><th>Started</th><th class="num">Duration</th>
-          <th class="num">Turns</th><th class="num">Tools</th><th class="num">Tokens</th><th class="num">Output</th><th>Models</th><th class="num">Est. cost</th>
+          <th class="num">Turns</th><th class="num">Tools</th><th class="num">Tokens</th><th class="num">Output</th><th>Models</th><th>Skills</th><th class="num">Est. cost</th>
         </tr>
       </thead>
       <tbody>
@@ -634,6 +852,9 @@ function renderSessions(sessions) {
           const title = s.title || s.first_prompt || s.session_id.slice(0, 8);
           const meta = [s.project_name, s.worktree, s.git_branch].filter(Boolean).join(" · ");
           const modelsHtml = (s.models || []).slice(0, 3).map((m) => modelChip(m.model, `${m.model_label} ×${m.turns}`)).join("");
+          const skillsHtml = (s.skills || []).slice(0, 3)
+            .map((k) => skillChip(k, k.invocations > 1 ? ` ×${k.invocations}` : ""))
+            .join("") + ((s.skills || []).length > 3 ? `<span class="skill-more">+${s.skills.length - 3}</span>` : "");
           return `
             <tr title="${escapeHtml(s.first_prompt || "")}\n${escapeHtml(s.session_id)}">
               <td class="sess-cell">
@@ -648,6 +869,7 @@ function renderSessions(sessions) {
               <td class="num">${fmtTokens(s.total_tokens)}</td>
               <td class="num">${fmtTokens(s.output_tokens)}</td>
               <td class="models-cell">${modelsHtml}</td>
+              <td class="models-cell">${skillsHtml || "<span class=\"skill-none\">–</span>"}</td>
               <td class="num">${fmtUSD(s.est_cost_usd)}</td>
             </tr>`;
         }).join("")}

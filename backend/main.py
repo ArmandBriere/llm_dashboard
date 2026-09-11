@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.collector import collector
 from backend.database import get_events, get_snapshots, get_subscriptions, init_db
+from backend.skills import get_skill_timeline, get_skill_usage, get_tool_usage
 from backend.usage import (
     get_five_hour_windows,
     get_usage_by_model,
@@ -215,6 +216,41 @@ def api_usage_windows(
 ) -> list[dict[str, Any]]:
     """Observed 5-hour quota windows with each model's share of the window."""
     return get_five_hour_windows(subscription_ids=_parse_ids(subscription_ids), date_str=date, limit=limit)
+
+
+@app.get("/api/usage/skills")
+def api_usage_skills(
+    subscription_ids: str | None = UsageIds,
+    date: str | None = UsageDate,
+    start_hour: int | None = UsageStart,
+    end_hour: int | None = UsageEnd,
+) -> dict[str, Any]:
+    """Per-skill and per-plugin invocation counts, injected context and attributed tokens."""
+    return get_skill_usage(**_usage_filters(subscription_ids, date, start_hour, end_hour))
+
+
+@app.get("/api/usage/tools")
+def api_usage_tools(
+    subscription_ids: str | None = UsageIds,
+    date: str | None = UsageDate,
+    start_hour: int | None = UsageStart,
+    end_hour: int | None = UsageEnd,
+    limit: int = Query(20, ge=1, le=200),
+) -> dict[str, Any]:
+    """Tool-call leaderboard with totals per tool kind and MCP server."""
+    return get_tool_usage(**_usage_filters(subscription_ids, date, start_hour, end_hour), limit=limit)
+
+
+@app.get("/api/usage/skill-timeline")
+def api_usage_skill_timeline(
+    subscription_ids: str | None = UsageIds,
+    date: str | None = UsageDate,
+    start_hour: int | None = UsageStart,
+    end_hour: int | None = UsageEnd,
+    bucket: str = Query("day", pattern="^(hour|day)$"),
+) -> list[dict[str, Any]]:
+    """Skill invocations per hour or day."""
+    return get_skill_timeline(**_usage_filters(subscription_ids, date, start_hour, end_hour), bucket=bucket)
 
 
 @app.post("/api/usage/rescan")
