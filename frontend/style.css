@@ -1176,6 +1176,77 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 
 .inline-toggle input { accent-color: var(--signal); cursor: pointer; }
 
+/* --- skills, plugins and tools ------------------------------------------ */
+
+.stats-tight { margin-bottom: 16px; }
+
+.skill-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.skill-source {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.skill-version { color: var(--ink-2); }
+
+.skill-fail {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--bad);
+}
+
+.skill-more, .skill-none {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+.table-note {
+  margin-top: 12px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink-3);
+  max-width: 90ch;
+}
+
+.table-note em { color: var(--ink-2); font-style: normal; }
+
+.tool-list { margin-top: 14px; }
+
+.tool-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 90px 54px;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.tool-name {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-bar { height: 3px; background: var(--surface-2); }
+.tool-bar > i { display: block; height: 100%; }
+
+.tool-count {
+  font-family: var(--font-mono);
+  text-align: right;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
 /* --- cache breakdown ---------------------------------------------------- */
 
 .cache-rows { display: flex; flex-direction: column; margin-top: 12px; }
