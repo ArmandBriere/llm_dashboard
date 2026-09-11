@@ -29,6 +29,12 @@ OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 ANTHROPIC_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile"
 
+# Stand-in identity for a keychain entry whose profile could not be resolved.
+# The collector drops these rather than record them; keep the address on the
+# domain backend.database.is_placeholder_email() recognises.
+UNIDENTIFIED_EMAIL = "unknown@claude.ai"
+UNIDENTIFIED_ORG = "Unknown Org"
+
 
 class ClaudeCodeProvider(BaseProvider):
     """Provider for Claude Code subscriptions via native Keychain & Anthropic API."""
@@ -411,8 +417,8 @@ class ClaudeCodeProvider(BaseProvider):
 
             record = {
                 "account_uuid": account_uuid,
-                "email": email or "unknown@claude.ai",
-                "organization_name": org_name or "Unknown Org",
+                "email": email or UNIDENTIFIED_EMAIL,
+                "organization_name": org_name or UNIDENTIFIED_ORG,
                 "organization_uuid": org_uuid,
                 "keychain_service": svc,
                 # Any credential for the active account marks it active.

@@ -12,8 +12,10 @@ from backend.database import (
     get_subscriptions,
     init_db,
     insert_snapshot,
+    is_placeholder_email,
     upsert_subscription,
 )
+from backend.providers.claude_code import UNIDENTIFIED_EMAIL, UNIDENTIFIED_ORG
 
 
 @pytest.fixture
@@ -197,3 +199,15 @@ def test_small_drop_with_new_window_is_reset(temp_db):
     )
     events = get_events(subscription_ids=[sub["id"]], db_path=temp_db)
     assert len(events) == 1
+
+
+def test_unidentified_accounts_are_not_listed(temp_db):
+    """A keychain entry whose profile never resolved must not surface as a card."""
+    upsert_subscription(email="test@vooban.com", account_uuid="uuid-1234", db_path=temp_db)
+    upsert_subscription(email=UNIDENTIFIED_EMAIL, organization_name=UNIDENTIFIED_ORG, db_path=temp_db)
+
+    assert is_placeholder_email(UNIDENTIFIED_EMAIL)
+    assert not is_placeholder_email("test@vooban.com")
+
+    subs = get_subscriptions(db_path=temp_db)
+    assert [s["email"] for s in subs] == ["test@vooban.com"]
