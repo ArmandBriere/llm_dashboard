@@ -17,6 +17,17 @@ from typing import Any, Generator
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "llm_dashboard.db"
 DB_PATH = Path(os.environ.get("LLM_DASHBOARD_DB_PATH", str(DEFAULT_DB_PATH)))
 
+# A provider that cannot resolve an account's profile falls back to a
+# placeholder identity on the @claude.ai domain. Real subscriptions are always
+# on a customer domain, so that address marks a keychain entry we failed to
+# identify — a dead entry, or a poll that ran while the machine was offline.
+PLACEHOLDER_EMAIL_DOMAIN = "@claude.ai"
+
+
+def is_placeholder_email(email: str | None) -> bool:
+    """True for the stand-in address a provider uses when identity is unknown."""
+    return bool(email) and email.lower().endswith(PLACEHOLDER_EMAIL_DOMAIN)
+
 
 _initialized = False
 
@@ -256,7 +267,15 @@ def format_countdown(iso_str: str | None) -> str:
 def get_subscriptions(db_path: Path | str | None = None) -> list[dict[str, Any]]:
     """Retrieve all subscriptions with their latest quota snapshot."""
     with get_db(db_path) as conn:
-        subs = [dict(r) for r in conn.execute("SELECT * FROM subscriptions ORDER BY id ASC").fetchall()]
+        # Unidentified accounts are excluded: they carry no readings, so a card
+        # for one would render an authoritative-looking 0% against nothing.
+        subs = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM subscriptions WHERE email NOT LIKE ? ORDER BY id ASC",
+                (f"%{PLACEHOLDER_EMAIL_DOMAIN}",),
+            ).fetchall()
+        ]
         for sub in subs:
             # The newest snapshot, full stop. Filtering on a non-null
             # five_hour_pct used to skip idle-window rows and surface a reading

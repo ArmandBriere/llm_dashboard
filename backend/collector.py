@@ -10,7 +10,7 @@ import asyncio
 import logging
 from typing import Any
 
-from backend.database import insert_snapshot, upsert_subscription
+from backend.database import insert_snapshot, is_placeholder_email, upsert_subscription
 from backend.usage import scan_transcripts
 from backend.providers.base import BaseProvider
 from backend.providers.claude_code import ClaudeCodeProvider
@@ -45,6 +45,16 @@ class QuotaCollector:
             try:
                 accounts = await provider.discover_and_fetch_all()
                 for acc in accounts:
+                    # Never record an account whose identity never resolved:
+                    # upserting it mints a permanent subscription row that no
+                    # later poll can reconcile, since it has no account UUID.
+                    if is_placeholder_email(acc.get("email")):
+                        logger.warning(
+                            "Skipping unidentified keychain entry %s: no profile could be resolved.",
+                            acc.get("keychain_service"),
+                        )
+                        continue
+
                     sub_record = upsert_subscription(
                         email=acc["email"],
                         account_uuid=acc.get("account_uuid"),
