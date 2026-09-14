@@ -41,7 +41,7 @@ const VIEWS = {
     load: (force) => loadSnapshotsAndRenderChart(force),
   },
   windows: { label: "5-hour windows", title: "5-hour windows", load: loadWindowsView },
-  resets: { label: "Reset log", title: "Reset log", load: () => loadEvents() },
+  resets: { label: "Reset log", title: "Reset log", load: loadEvents },
   models: { label: "Models & cache", title: "Models and cache", load: loadModelsView },
   activity: { label: "Activity", title: "Activity over time", load: loadActivityView },
   projects: { label: "Projects", title: "Projects", load: loadProjectsView },

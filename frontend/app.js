@@ -707,7 +707,10 @@ async function loadSnapshotsAndRenderChart(force) {
 
   url += params.join("&");
 
-  renderChart(await cachedJson(url, force));
+  // The reset markers are drawn from state.events, so the chart cannot be
+  // painted before they land — the two fetches go out together.
+  const [snapshots] = await Promise.all([cachedJson(url, force), loadEvents(force)]);
+  renderChart(snapshots);
 }
 
 function renderChart(snapshots) {
