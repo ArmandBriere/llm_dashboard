@@ -611,11 +611,11 @@ body.nav-collapsed .nav-item { justify-content: center; padding: 8px 0; gap: 0; 
 
 .rail-meter-track i { display: block; height: 100%; background: var(--account); }
 .rail-meter-track i.is-warn { background: var(--warn); }
-.rail-meter-track i.is-alert { background: var(--alert); }
+.rail-meter-track i.is-alert { background: var(--bad); }
 
 .rail-meter-pct { width: 27px; flex: none; text-align: right; font-variant-numeric: tabular-nums; }
 .rail-meter-pct.is-warn { color: var(--warn); }
-.rail-meter-pct.is-alert { color: var(--alert); }
+.rail-meter-pct.is-alert { color: var(--bad); }
 
 /* --- drawer behaviour on narrow screens ---------------------------------- */
 
@@ -693,11 +693,11 @@ body.nav-collapsed .nav-item { justify-content: center; padding: 8px 0; gap: 0; 
 .view-error {
   margin-bottom: 20px;
   padding: 10px 14px;
-  border: 1px solid var(--alert);
+  border: 1px solid var(--bad);
   border-radius: var(--r-md);
   font-family: var(--font-mono);
   font-size: 11.5px;
-  color: var(--alert);
+  color: var(--bad);
 }
 
 .note-mono {
