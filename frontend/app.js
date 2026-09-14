@@ -33,6 +33,35 @@ function parseIsoDate(str) {
 }
 
 /**
+ * Every view fetch goes through one cache, keyed by URL and cleared whenever a
+ * filter moves. Re-rendering a view the cache already holds — a theme switch, a
+ * change of weighting — then costs no network, while the 30s poll refetches
+ * only the endpoints the visible view draws. Promises are cached rather than
+ * values, so two blocks in one view asking for the same URL share a request.
+ */
+const responseCache = new Map();
+
+function invalidateCache() {
+  responseCache.clear();
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  return res.json();
+}
+
+function cachedJson(url, force) {
+  if (force || !responseCache.has(url)) {
+    responseCache.set(url, fetchJson(url).catch((err) => {
+      responseCache.delete(url);
+      throw err;
+    }));
+  }
+  return responseCache.get(url);
+}
+
+/**
  * One hue per account, fixed by identity so a filter never repaints the
  * survivors. The hues come from the active theme's data palette, so switching
  * theme re-tints the accounts without changing which account owns which slot.
@@ -286,18 +315,16 @@ async function initDashboard() {
   restoreViewState();
   syncControlsFromState();
 
+  // The account list is chrome, not a view: it feeds the filter chips, the
+  // pinned meters in the sidenav and the "synced" clock in the rail, so it is
+  // loaded and polled regardless of which view is open.
   await loadSubscriptions();
-  await loadEvents();
-  await loadSnapshotsAndRenderChart();
-  loadUsage();
+  await initNav();
 
-  // Auto-sync every 30 seconds
   if (state.pollingInterval) clearInterval(state.pollingInterval);
   state.pollingInterval = setInterval(async () => {
     await loadSubscriptions(false);
-    await loadSnapshotsAndRenderChart(false);
-    await loadEvents();
-    loadUsage();
+    await refreshCurrentView({ force: true });
   }, 30000);
 }
 
@@ -308,6 +335,7 @@ async function loadSubscriptions(updateDropdown = true) {
     const data = await res.json();
     state.subscriptions = data;
     renderSubscriptionCards(data);
+    renderRailMeters(data);
     if (updateDropdown) {
       updateSubscriptionDropdown(data);
     }
@@ -497,6 +525,41 @@ function renderSubscriptionCards(subs) {
   animateGaugesOnce(container);
 }
 
+/**
+ * The condensed read pinned to the foot of the sidenav. The live quota is the
+ * one number you want while reading any other view, so it follows you out of
+ * the Overview instead of costing a navigation.
+ */
+function renderRailMeters(subs) {
+  const el = document.getElementById("rail-meters");
+  if (!el) return;
+  if (!subs || !subs.length) {
+    el.innerHTML = "";
+    return;
+  }
+  el.innerHTML = subs.map((sub) => {
+    const snap = sub.latest_snapshot || {};
+    const color = getAccountColor(sub);
+    const name = accountName(sub);
+    const bar = (label, pct, resetsAt) => {
+      const value = pct != null ? pct : 0;
+      const tone = value >= 90 ? "is-alert" : (value >= 75 ? "is-warn" : "");
+      return `
+        <div class="rail-meter-bar" title="${escapeHtml(label)} · ${value.toFixed(1)}% used${resetsAt ? ` · resets ${escapeHtml(formatCountdown(resetsAt))}` : ""}">
+          <span class="rail-meter-tag">${escapeHtml(label)}</span>
+          <span class="rail-meter-track"><i class="${tone}" style="width:${Math.min(Math.max(value, 0), 100)}%"></i></span>
+          <span class="rail-meter-pct ${tone}">${Math.round(value)}%</span>
+        </div>`;
+    };
+    return `
+      <div class="rail-meter" style="--account:${color.line}" title="${escapeHtml(name)}">
+        <div class="rail-meter-name">${escapeHtml(name)}</div>
+        ${bar("5h", snap.five_hour_pct, snap.five_hour_resets_at)}
+        ${bar("7d", snap.seven_day_pct, snap.seven_day_resets_at)}
+      </div>`;
+  }).join("");
+}
+
 function updateSubscriptionDropdown(subs) {
   renderAccountChips(subs);
 }
@@ -555,26 +618,20 @@ function toggleAccount(id) {
   applyFilters();
 }
 
-async function loadEvents() {
-  try {
-    let url = "/api/events?limit=50";
-    const idsParam = selectedIdsParam();
-    if (idsParam) {
-      url += `&subscription_ids=${idsParam}`;
-    }
-    const dateStr = getSelectedDateString();
-    if (dateStr) {
-      url += `&date=${dateStr}`;
-    }
-
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const events = await res.json();
-    state.events = events;
-    renderEvents(events);
-  } catch (err) {
-    console.error("Failed to load events:", err);
+async function loadEvents(force) {
+  let url = "/api/events?limit=50";
+  const idsParam = selectedIdsParam();
+  if (idsParam) {
+    url += `&subscription_ids=${idsParam}`;
   }
+  const dateStr = getSelectedDateString();
+  if (dateStr) {
+    url += `&date=${dateStr}`;
+  }
+
+  const events = await cachedJson(url, force);
+  state.events = events;
+  renderEvents(events);
 }
 
 /** Thin-stroke glyphs; emoji render inconsistently and read as decoration. */
@@ -627,37 +684,30 @@ function renderEvents(events) {
     .join("");
 }
 
-async function loadSnapshotsAndRenderChart(showLoading = true) {
-  try {
-    let url = "/api/snapshots?";
-    const params = [];
+async function loadSnapshotsAndRenderChart(force) {
+  let url = "/api/snapshots?";
+  const params = [];
 
-    const idsParam = selectedIdsParam();
-    if (idsParam) {
-      params.push(`subscription_ids=${idsParam}`);
-    }
-
-    const dateStr = getSelectedDateString();
-    if (dateStr) {
-      params.push(`date=${dateStr}`);
-    }
-
-    if (state.startHour !== null) {
-      params.push(`start_hour=${state.startHour}`);
-    }
-    if (state.endHour !== null) {
-      params.push(`end_hour=${state.endHour}`);
-    }
-
-    url += params.join("&");
-
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const snapshots = await res.json();
-    renderChart(snapshots);
-  } catch (err) {
-    console.error("Failed to load snapshots:", err);
+  const idsParam = selectedIdsParam();
+  if (idsParam) {
+    params.push(`subscription_ids=${idsParam}`);
   }
+
+  const dateStr = getSelectedDateString();
+  if (dateStr) {
+    params.push(`date=${dateStr}`);
+  }
+
+  if (state.startHour !== null) {
+    params.push(`start_hour=${state.startHour}`);
+  }
+  if (state.endHour !== null) {
+    params.push(`end_hour=${state.endHour}`);
+  }
+
+  url += params.join("&");
+
+  renderChart(await cachedJson(url, force));
 }
 
 function renderChart(snapshots) {
@@ -954,11 +1004,12 @@ function applyFilters() {
 
   syncFilterButtons();
   renderWindowLabel();
+  if (typeof syncFilterBar === "function") syncFilterBar();
   saveViewState();
 
-  loadEvents();
-  loadSnapshotsAndRenderChart();
-  loadUsage();
+  // Every cached payload was scoped to the old filters, so none of it survives.
+  invalidateCache();
+  refreshCurrentView({ force: true });
 }
 
 function setFilterDate(mode) {
@@ -992,7 +1043,8 @@ function setDisplayMode(mode) {
     if (remBtn) remBtn.classList.add("active");
   }
   saveViewState();
-  loadSnapshotsAndRenderChart();
+  // The axis is a property of the drawing, not of the query: re-render only.
+  refreshCurrentView();
 }
 
 const POLL_BTN_LABEL = `
@@ -1010,9 +1062,9 @@ async function forceRefresh() {
   try {
     const res = await fetch("/api/refresh", { method: "POST" });
     if (res.ok) {
+      invalidateCache();
       await loadSubscriptions();
-      await loadEvents();
-      await loadSnapshotsAndRenderChart();
+      await refreshCurrentView({ force: true });
     }
   } catch (err) {
     console.error("Manual refresh failed:", err);
@@ -1059,10 +1111,10 @@ function escapeHtml(text) {
 // Colours are baked into the rendered markup and into the canvas, so a theme
 // switch has to repaint everything rather than relying on the cascade.
 document.addEventListener("themechange", () => {
-  if (!state.subscriptions.length && !state.events.length) return;
+  if (!state.subscriptions.length) return;
   renderSubscriptionCards(state.subscriptions);
+  renderRailMeters(state.subscriptions);
   renderAccountChips(state.subscriptions);
-  renderEvents(state.events);
-  loadSnapshotsAndRenderChart(false);
-  if (typeof usageState !== "undefined" && usageState.data) renderUsage(usageState.data);
+  // Replays the active view off the cache, so a theme switch costs no network.
+  refreshCurrentView();
 });

@@ -8,11 +8,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
-  <link rel="stylesheet" href="/static/style.css?v=6.1">
+  <link rel="stylesheet" href="/static/style.css?v=7.0">
 
   <!-- Applies the saved theme before first paint, so the page never flashes
        the default one. -->
-  <script src="/static/theme.js?v=6.1"></script>
+  <script src="/static/theme.js?v=7.0"></script>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
@@ -20,83 +20,90 @@
 </head>
 <body>
 
-<header class="rail">
-  <div class="wordmark">
-    <b>Quota Console</b>
-    <span class="wordmark-sub">claude code</span>
-  </div>
-  <span class="rail-divider"></span>
-  <span id="live-indicator" class="lamp pulse" title="Polling the Anthropic usage API every 5 minutes">polling</span>
+<div class="app" id="app">
 
-  <span class="rail-spacer"></span>
+  <!-- Scrim closes the drawer on narrow screens, where the sidenav overlays. -->
+  <div class="nav-scrim" id="nav-scrim" onclick="closeNavDrawer()" hidden></div>
 
-  <span id="last-updated">connecting…</span>
-
-  <div class="theme-picker" id="theme-picker">
-    <button class="btn theme-btn" id="theme-btn" onclick="toggleThemeMenu(event)"
-            aria-haspopup="true" aria-expanded="false" aria-controls="theme-menu">
-      <span class="theme-chip" aria-hidden="true">
-        <span style="background: var(--bg)"></span>
-        <span style="background: var(--signal)"></span>
-        <span style="background: var(--acct-1)"></span>
-        <span style="background: var(--acct-2)"></span>
-      </span>
-      <span id="theme-current">Console</span>
-    </button>
-    <div class="theme-menu" id="theme-menu" role="menu" aria-label="Theme" hidden>
-      <span class="label theme-menu-head">theme</span>
-      <div id="theme-list"></div>
+  <aside class="sidenav" id="sidenav">
+    <div class="sidenav-head">
+      <div class="wordmark">
+        <b>Quota Console</b>
+        <span class="wordmark-sub">claude code</span>
+      </div>
+      <button class="icon-btn sidenav-collapse" id="sidenav-collapse" onclick="toggleSidenav()"
+              title="Collapse the sidebar" aria-label="Collapse the sidebar">
+        <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <rect x="1.8" y="2.6" width="12.4" height="10.8" rx="1.2"/><path d="M6.2 2.6v10.8"/>
+        </svg>
+      </button>
     </div>
-  </div>
 
-  <button id="refresh-btn" class="btn btn-signal" onclick="forceRefresh()">
-    <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-      <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.97"/><path d="M13.6 2.2v3.1h-3.1"/>
-    </svg>
-    Poll now
-  </button>
-</header>
+    <!-- Destinations are generated from the view registry in nav.js, so the
+         routes, the titles and this list cannot drift apart. -->
+    <nav class="nav" id="nav" aria-label="Sections"></nav>
 
-<main class="shell">
-
-  <!-- Hero: one meter per account. The gauges carry the whole read at a glance. -->
-  <section class="panel">
-    <div class="panel-inner">
-      <div class="panel-head">
-        <span class="panel-kicker">01</span>
-        <h2>Live quota</h2>
-        <span class="panel-meta" id="subscription-count">…</span>
-      </div>
-      <div id="subscriptions-grid" class="meters">
-        <div class="empty-state">Reading the latest poll…</div>
-      </div>
+    <div class="sidenav-foot">
+      <span class="label rail-meters-head">live quota</span>
+      <div id="rail-meters" class="rail-meters"></div>
     </div>
-  </section>
+  </aside>
 
-  <!-- Timeline: burn-down curves with reset markers, plus the shared filters. -->
-  <section class="panel">
-    <div class="panel-inner">
-      <div class="panel-head">
-        <span class="panel-kicker">02</span>
-        <h2>Burn-down and resets</h2>
-        <span class="panel-meta" id="chart-range-label"></span>
+  <div class="main">
+
+    <header class="rail">
+      <button class="icon-btn nav-open" id="nav-open" onclick="openNavDrawer()"
+              title="Open the sections menu" aria-label="Open the sections menu">
+        <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <path d="M2.2 4h11.6M2.2 8h11.6M2.2 12h11.6"/>
+        </svg>
+      </button>
+
+      <h1 class="rail-title" id="view-title">Overview</h1>
+      <span class="rail-divider"></span>
+      <span id="live-indicator" class="lamp pulse" title="Polling the Anthropic usage API every 5 minutes">polling</span>
+
+      <span class="rail-spacer"></span>
+
+      <span id="last-updated">connecting…</span>
+
+      <div class="theme-picker" id="theme-picker">
+        <button class="btn theme-btn" id="theme-btn" onclick="toggleThemeMenu(event)"
+                aria-haspopup="true" aria-expanded="false" aria-controls="theme-menu">
+          <span class="theme-chip" aria-hidden="true">
+            <span style="background: var(--bg)"></span>
+            <span style="background: var(--signal)"></span>
+            <span style="background: var(--acct-1)"></span>
+            <span style="background: var(--acct-2)"></span>
+          </span>
+          <span id="theme-current">Console</span>
+        </button>
+        <div class="theme-menu" id="theme-menu" role="menu" aria-label="Theme" hidden>
+          <span class="label theme-menu-head">theme</span>
+          <div id="theme-list"></div>
+        </div>
       </div>
 
-      <p class="panel-note">
-        Solid lines track the 5-hour window, dashed lines the weekly one. Vertical
-        markers show where a window reset or ran out. These filters also drive
-        everything below.
-      </p>
+      <button id="refresh-btn" class="btn btn-signal" onclick="forceRefresh()">
+        <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.97"/><path d="M13.6 2.2v3.1h-3.1"/>
+        </svg>
+        Poll now
+      </button>
+    </header>
 
+    <!-- One filter bar for the whole app. Each control declares the views it
+         applies to in data-for; nav.js dims the ones the active view ignores. -->
+    <div class="filterbar" id="filterbar">
       <div class="controls">
-        <div class="control">
+        <div class="control" data-for="*">
           <span class="label">accounts</span>
           <div id="account-chips" class="chips" role="group" aria-label="Accounts">
             <button class="chip active" data-sub-id="all" onclick="toggleAccount('all')">All</button>
           </div>
         </div>
 
-        <div class="control">
+        <div class="control" data-for="*">
           <span class="label">date</span>
           <div class="control-row">
             <input type="date" id="filter-date" onchange="applyFilters()" aria-label="Date">
@@ -107,7 +114,7 @@
           </div>
         </div>
 
-        <div class="control">
+        <div class="control" id="control-hours" data-for="overview burndown windows models activity projects sessions skills plugins tools">
           <span class="label">hours</span>
           <div class="control-row">
             <div class="segmented" id="hour-presets">
@@ -130,51 +137,15 @@
           </div>
         </div>
 
-        <div class="control">
+        <div class="control" data-for="burndown">
           <span class="label">axis</span>
           <div class="segmented">
             <button id="mode-used" class="active" onclick="setDisplayMode('used')">Used</button>
             <button id="mode-remaining" onclick="setDisplayMode('remaining')">Remaining</button>
           </div>
         </div>
-      </div>
 
-      <div class="chart-frame">
-        <canvas id="quotaChart"></canvas>
-      </div>
-    </div>
-  </section>
-
-  <!-- Event log -->
-  <section class="panel">
-    <div class="panel-inner">
-      <div class="panel-head">
-        <span class="panel-kicker">03</span>
-        <h2>Reset log</h2>
-        <span class="panel-meta" id="events-count">0 events</span>
-      </div>
-      <div class="events" id="events-list">
-        <div class="empty-state">Nothing recorded in this window. Resets and exhaustions land here as the poller detects them.</div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Local Claude Code usage analytics parsed from ~/.claude*/projects transcripts -->
-  <section class="panel">
-    <div class="panel-inner">
-      <div class="panel-head">
-        <span class="panel-kicker">04</span>
-        <h2>Where the quota went</h2>
-        <span class="panel-meta" id="usage-meta"></span>
-      </div>
-
-      <p class="panel-note">
-        Read from your local session transcripts, filtered to the same accounts,
-        date and hours as the chart above.
-      </p>
-
-      <div class="controls">
-        <div class="control">
+        <div class="control" data-for="overview windows models activity projects sessions skills plugins tools">
           <span class="label">weight by</span>
           <div class="segmented" title="Cost weighting prices a cache read at a tenth of a fresh token and output several times more, so it tracks quota consumption better than raw counts">
             <button id="usage-weight-cost" class="active" onclick="setUsageWeight('cost')">Est. cost</button>
@@ -182,21 +153,72 @@
           </div>
         </div>
       </div>
+    </div>
 
-      <div class="stats" id="usage-stats">
-        <div class="empty-state">Loading usage…</div>
-      </div>
+    <main class="shell">
 
-      <div class="blocks" style="margin-top: 26px;">
-        <div class="block">
-          <div class="block-head">
-            <h3>5-hour windows</h3>
-            <span class="block-meta">each model's share of the window's peak utilisation</span>
-          </div>
-          <div id="usage-windows" class="windows"></div>
+      <div class="view-error" id="view-error" hidden></div>
+
+      <!-- Every view stays in the DOM and is toggled with a class, so the render
+           functions can always resolve their target nodes by id. -->
+
+      <!-- ---------------------------------------------------------------- -->
+      <section class="view" data-view="overview">
+        <div class="view-head">
+          <h2>Live quota</h2>
+          <span class="view-meta" id="subscription-count">…</span>
+        </div>
+        <div id="subscriptions-grid" class="meters">
+          <div class="empty-state">Reading the latest poll…</div>
         </div>
 
-        <div class="grid-2">
+        <div class="view-head view-head-sub">
+          <h2>Headline usage</h2>
+          <span class="view-meta" id="usage-meta"></span>
+        </div>
+        <div class="stats" id="usage-stats">
+          <div class="empty-state">Loading usage…</div>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section class="view" data-view="burndown">
+        <div class="view-head">
+          <h2>Burn-down and resets</h2>
+          <span class="view-meta" id="chart-range-label"></span>
+        </div>
+        <p class="view-note">
+          Solid lines track the 5-hour window, dashed lines the weekly one. Vertical
+          markers show where a window reset or ran out.
+        </p>
+        <div class="chart-frame">
+          <canvas id="quotaChart"></canvas>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section class="view" data-view="windows">
+        <div class="view-head">
+          <h2>5-hour windows</h2>
+          <span class="view-meta">each model's share of the window's peak utilisation</span>
+        </div>
+        <div id="usage-windows" class="windows"></div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section class="view" data-view="resets">
+        <div class="view-head">
+          <h2>Reset log</h2>
+          <span class="view-meta" id="events-count">0 events</span>
+        </div>
+        <div class="events" id="events-list">
+          <div class="empty-state">Nothing recorded in this window. Resets and exhaustions land here as the poller detects them.</div>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section class="view" data-view="models">
+        <div class="blocks">
           <div class="block">
             <div class="block-head">
               <h3>Model mix</h3>
@@ -214,18 +236,21 @@
             <div id="usage-cache"></div>
           </div>
         </div>
+      </section>
 
-        <div class="block">
-          <div class="block-head">
-            <h3>Activity over time</h3>
-            <span class="block-meta" id="usage-timeline-caption"></span>
+      <!-- ---------------------------------------------------------------- -->
+      <section class="view" data-view="activity">
+        <div class="blocks">
+          <div class="block">
+            <div class="block-head">
+              <h3>Activity over time</h3>
+              <span class="block-meta" id="usage-timeline-caption"></span>
+            </div>
+            <div class="chart-frame chart-frame-sm">
+              <canvas id="usageTimelineChart"></canvas>
+            </div>
           </div>
-          <div class="chart-frame chart-frame-sm">
-            <canvas id="usageTimelineChart"></canvas>
-          </div>
-        </div>
 
-        <div class="grid-2">
           <div class="block">
             <div class="block-head">
               <h3>When you work</h3>
@@ -233,62 +258,67 @@
             </div>
             <div id="usage-heatmap" class="heatmap"></div>
           </div>
-
-          <div class="block">
-            <div class="block-head">
-              <h3>Projects</h3>
-              <span class="block-meta">by weighted usage</span>
-            </div>
-            <div id="usage-projects" class="table-wrap"></div>
-          </div>
         </div>
+      </section>
 
-        <div class="block">
-          <div class="block-head">
-            <h3>Skills</h3>
-            <span class="block-meta" id="usage-skills-caption"></span>
-          </div>
-          <div id="usage-skills-stats" class="stats stats-tight"></div>
-          <div id="usage-skills" class="table-wrap"></div>
+      <!-- ---------------------------------------------------------------- -->
+      <section class="view" data-view="projects">
+        <div class="view-head">
+          <h2>Projects</h2>
+          <span class="view-meta">by weighted usage</span>
         </div>
+        <div id="usage-projects" class="table-wrap"></div>
+      </section>
 
-        <div class="grid-2">
-          <div class="block">
-            <div class="block-head">
-              <h3>Plugins</h3>
-              <span class="block-meta" id="usage-plugins-caption"></span>
-            </div>
-            <div id="usage-plugins" class="table-wrap"></div>
-          </div>
-
-          <div class="block">
-            <div class="block-head">
-              <h3>Tools</h3>
-              <span class="block-meta" id="usage-tools-caption"></span>
-            </div>
-            <div id="usage-tools"></div>
-          </div>
+      <!-- ---------------------------------------------------------------- -->
+      <section class="view" data-view="sessions">
+        <div class="view-head">
+          <h2>Sessions</h2>
+          <span class="view-meta" id="usage-sessions-caption"></span>
         </div>
+        <div id="usage-sessions" class="table-wrap sessions-wrap"></div>
+      </section>
 
-        <div class="block">
-          <div class="block-head">
-            <h3>Sessions</h3>
-            <span class="block-meta" id="usage-sessions-caption"></span>
-          </div>
-          <div id="usage-sessions" class="table-wrap sessions-wrap"></div>
+      <!-- ---------------------------------------------------------------- -->
+      <section class="view" data-view="skills">
+        <div class="view-head">
+          <h2>Skills</h2>
+          <span class="view-meta" id="usage-skills-caption"></span>
         </div>
-      </div>
-    </div>
-  </section>
+        <div id="usage-skills-stats" class="stats stats-tight"></div>
+        <div id="usage-skills" class="table-wrap"></div>
+      </section>
 
-</main>
+      <!-- ---------------------------------------------------------------- -->
+      <section class="view" data-view="plugins">
+        <div class="view-head">
+          <h2>Plugins</h2>
+          <span class="view-meta" id="usage-plugins-caption"></span>
+        </div>
+        <div id="usage-plugins" class="table-wrap"></div>
+      </section>
 
-<footer class="foot">
-  <span>Polls the Anthropic OAuth usage API every 5 minutes · credentials read from the macOS Keychain</span>
-  <span>LLM Quota Tracker v1.2</span>
-</footer>
+      <!-- ---------------------------------------------------------------- -->
+      <section class="view" data-view="tools">
+        <div class="view-head">
+          <h2>Tools</h2>
+          <span class="view-meta" id="usage-tools-caption"></span>
+        </div>
+        <div id="usage-tools"></div>
+      </section>
 
-<script src="/static/app.js?v=6.1"></script>
-<script src="/static/usage.js?v=6.1"></script>
+    </main>
+
+    <footer class="foot">
+      <span>Polls the Anthropic OAuth usage API every 5 minutes · credentials read from the macOS Keychain</span>
+      <span>LLM Quota Tracker v1.3</span>
+    </footer>
+
+  </div>
+</div>
+
+<script src="/static/app.js?v=7.0"></script>
+<script src="/static/usage.js?v=7.0"></script>
+<script src="/static/nav.js?v=7.0"></script>
 </body>
 </html>

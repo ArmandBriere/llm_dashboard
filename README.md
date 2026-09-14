@@ -8,12 +8,12 @@ It integrates **directly and natively** with macOS Keychain credentials and Anth
 
 ## Claude Code Usage Insights
 
-Below the quota chart the dashboard analyses your local Claude Code transcripts
+Alongside the live quota the dashboard analyses your local Claude Code transcripts
 (`~/.claude*/projects/**/*.jsonl`). Each assistant turn there records the model and
 the exact token usage the API returned, which the OAuth usage endpoint does not
 expose. The collector indexes new lines incrementally every poll (a cold scan of
 ~1,250 transcripts takes about 10 s) into `usage_turns`, `usage_tool_calls` and
-`usage_skill_invocations`, and the section shows:
+`usage_skill_invocations`, and the **usage** and **surfaces** views show:
 
 - **Stat tiles**: sessions, turns, tokens, output/thinking share, cache hit rate, tool calls, estimated API-equivalent cost per account.
 - **5-hour windows**: every reset window the poller observed, with each model's share of the window's peak utilisation (share of estimated cost or raw tokens × peak %).
@@ -58,7 +58,13 @@ suffix is `sha256(path)[:8]`, the same rule Claude Code uses. Cost estimates com
 - **Direct Anthropic API Integration**: Communicates directly with Anthropic's OAuth endpoints to fetch live utilization and token expiration.
 - **5-Minute Periodic Polling**: Background collector runs every 5 minutes and persists quota snapshots to a lightweight SQLite database (`llm_dashboard.db`).
 - **Smart Quota Reset & Exhaustion Detection**: Automatically detects when a 5-hour quota refreshes (a large utilization drop, or a small drop paired with a new reset deadline), a 7-day weekly reset occurs, or quota hits 100% capacity, logging distinct events.
+- **Routed Sidenav**: Eleven views behind a collapsible sidebar, one visible at a
+  time, each on its own `#/route` so a view is bookmarkable and survives a reload.
+  Only the visible view fetches, so the 30-second background refresh asks for one
+  or two endpoints rather than all of them. The live quota stays pinned to the
+  foot of the sidebar wherever you navigate.
 - **Interactive Timeline Dashboard**:
+  - One filter bar for every view; controls a view ignores are dimmed.
   - Toggle one or several accounts with colour-coded chips (All, Vooban, VoobanLabs). Each account keeps one hue everywhere: cards, chart lines, reset markers, and the event log.
   - Filter by date (Today, All Time, or specific date).
   - Filter by hour of day with presets (Work day, Morning, Afternoon, Evening, 24h) or a dual-handle slider.
@@ -165,8 +171,9 @@ llm_dashboard/
 │   ├── index.html          # Web dashboard layout
 │   ├── style.css           # "Console" design system: theme tokens and layout
 │   ├── theme.js            # Theme registry, picker, and token reader for the charts
-│   ├── app.js              # Chart.js timeline, quota gauges, filters, and polling
-│   └── usage.js            # Claude Code usage insights parsed from local transcripts
+│   ├── app.js              # Chart.js timeline, quota gauges, filters, fetch cache
+│   ├── usage.js            # Claude Code usage insights parsed from local transcripts
+│   └── nav.js              # View registry, generated sidenav, and the hash router
 ├── tests/
 │   ├── test_database.py    # Unit tests for database & event logic
 │   ├── test_usage.py       # Transcript scanner and aggregate tests
