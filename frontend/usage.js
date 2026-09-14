@@ -9,8 +9,6 @@
 
 const usageState = {
   timelineChart: null,
-  loading: false,
-  data: null,
   // T3 Code and Claude Code spawn one-turn helper sessions (titles, branch
   // names). They are real usage but bury the sessions you actually worked in.
   hideHelperSessions: true,
@@ -18,7 +16,8 @@ const usageState = {
 
 function toggleHelperSessions(checked) {
   usageState.hideHelperSessions = !!checked;
-  if (usageState.data) renderSessions(usageState.data.sessions);
+  // The filter is client-side, so this re-renders from the cached payload.
+  loadSessionsView(false);
 }
 
 function isHelperSession(s) {
@@ -163,7 +162,8 @@ function setUsageWeight(mode) {
   state.usageWeight = mode === "tokens" ? "tokens" : "cost";
   syncUsageControls();
   saveViewState();
-  if (usageState.data) renderUsage(usageState.data);
+  // Both weightings ship in every row, so this is a re-render, not a refetch.
+  refreshCurrentView();
 }
 
 // ---------- loading ----------
@@ -183,52 +183,62 @@ function usageQuery(extra = {}) {
   return params.toString();
 }
 
-async function fetchJson(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res.json();
+/**
+ * Per-view loaders, wired to the routes in nav.js. Each both fetches and
+ * renders, so a re-render off the cache is the same call with force unset.
+ * Fetches go through cachedJson() in app.js, keyed by URL.
+ */
+
+async function loadUsageSummary(force) {
+  const summary = await cachedJson(`/api/usage/summary?${usageQuery()}`, force);
+  renderUsageMeta(summary);
+  renderUsageStats(summary);
 }
 
-async function loadUsage() {
-  if (usageState.loading) return;
-  usageState.loading = true;
-  try {
-    const bucket = getSelectedDateString() ? "hour" : "day";
-    const [summary, models, windows, timeline, heatmap, projects, sessions, skills, tools] = await Promise.all([
-      fetchJson(`/api/usage/summary?${usageQuery()}`),
-      fetchJson(`/api/usage/models?${usageQuery()}`),
-      fetchJson(`/api/usage/windows?${usageQuery({ limit: 12 })}`),
-      fetchJson(`/api/usage/timeline?${usageQuery({ bucket })}`),
-      fetchJson(`/api/usage/heatmap?${usageQuery()}`),
-      fetchJson(`/api/usage/projects?${usageQuery({ limit: 12 })}`),
-      fetchJson(`/api/usage/sessions?${usageQuery({ limit: 80 })}`),
-      fetchJson(`/api/usage/skills?${usageQuery()}`),
-      fetchJson(`/api/usage/tools?${usageQuery({ limit: 14 })}`),
-    ]);
-    usageState.data = { summary, models, windows, timeline, heatmap, projects, sessions, skills, tools, bucket };
-    renderUsage(usageState.data);
-  } catch (err) {
-    console.error("Failed to load usage insights:", err);
-    const stats = document.getElementById("usage-stats");
-    if (stats) stats.innerHTML = `<div class="empty-state">Could not load usage data: ${escapeHtml(err.message)}</div>`;
-  } finally {
-    usageState.loading = false;
-  }
+async function loadModelsView(force) {
+  const [models, summary] = await Promise.all([
+    cachedJson(`/api/usage/models?${usageQuery()}`, force),
+    cachedJson(`/api/usage/summary?${usageQuery()}`, force),
+  ]);
+  renderModelMix(models);
+  renderCache(summary);
 }
 
-function renderUsage(data) {
-  renderUsageMeta(data.summary);
-  renderUsageStats(data.summary);
-  renderWindows(data.windows);
-  renderModelMix(data.models);
-  renderCache(data.summary);
-  renderTimeline(data.timeline, data.bucket);
-  renderHeatmap(data.heatmap);
-  renderProjects(data.projects);
-  renderSkills(data.skills);
-  renderPlugins(data.skills);
-  renderTools(data.tools);
-  renderSessions(data.sessions);
+async function loadActivityView(force) {
+  // Hours only exist inside a single day; "all time" buckets by day instead.
+  const bucket = getSelectedDateString() ? "hour" : "day";
+  const [timeline, heatmap] = await Promise.all([
+    cachedJson(`/api/usage/timeline?${usageQuery({ bucket })}`, force),
+    cachedJson(`/api/usage/heatmap?${usageQuery()}`, force),
+  ]);
+  renderTimeline(timeline, bucket);
+  renderHeatmap(heatmap);
+}
+
+async function loadWindowsView(force) {
+  renderWindows(await cachedJson(`/api/usage/windows?${usageQuery({ limit: 12 })}`, force));
+}
+
+async function loadProjectsView(force) {
+  renderProjects(await cachedJson(`/api/usage/projects?${usageQuery({ limit: 12 })}`, force));
+}
+
+async function loadSessionsView(force) {
+  renderSessions(await cachedJson(`/api/usage/sessions?${usageQuery({ limit: 80 })}`, force));
+}
+
+async function loadSkillsView(force) {
+  renderSkills(await cachedJson(`/api/usage/skills?${usageQuery()}`, force));
+}
+
+// Plugins are rolled up from the same payload the skills view draws, so the two
+// share a cache entry and the second of them costs nothing.
+async function loadPluginsView(force) {
+  renderPlugins(await cachedJson(`/api/usage/skills?${usageQuery()}`, force));
+}
+
+async function loadToolsView(force) {
+  renderTools(await cachedJson(`/api/usage/tools?${usageQuery({ limit: 14 })}`, force));
 }
 
 // ---------- meta + stats ----------
@@ -306,6 +316,7 @@ function renderWindows(windows) {
     const color = getAccountColor(sub || w.subscription_id);
     const shareKey = byCost ? "window_pct_by_cost" : "window_pct_by_tokens";
     const models = (w.models || []).slice().sort((a, b) => b[shareKey] - a[shareKey]);
+    rememberModelLabels(models);
     const segments = models.map((m) => `<div class="win-seg" style="width:${Math.max(0, Math.min(100, m[shareKey]))}%; background:${modelColor(m.model)}" title="${escapeHtml(m.model_label)} · ${fmtPct(m[shareKey])} of the window"></div>`).join("");
     const unattributed = w.peak_pct > 0 && !models.length
       ? `<div class="win-seg win-seg-unknown" style="width:${w.peak_pct}%" title="Utilisation with no matching local turns"></div>`
@@ -348,6 +359,7 @@ function renderWindows(windows) {
 // ---------- model mix ----------
 
 function renderModelMix(models) {
+  rememberModelLabels(models);
   const bar = document.getElementById("usage-model-bar");
   const table = document.getElementById("usage-model-table");
   const caption = document.getElementById("usage-model-caption");
@@ -423,6 +435,7 @@ function renderCache(summary) {
 // ---------- timeline ----------
 
 function renderTimeline(rows, bucket) {
+  rememberModelLabels(rows);
   const canvas = document.getElementById("usageTimelineChart");
   const caption = document.getElementById("usage-timeline-caption");
   if (!canvas) return;
@@ -526,14 +539,21 @@ function renderTimeline(rows, bucket) {
   });
 }
 
+/**
+ * Display labels for model ids, learned from whichever rows have been rendered.
+ * Views load independently now, so a label seen in one is remembered for the
+ * others rather than re-derived from a single shared payload.
+ */
 const PRETTY_CACHE = new Map();
+
+function rememberModelLabels(rows) {
+  (rows || []).forEach((r) => {
+    if (r && r.model && r.model_label) PRETTY_CACHE.set(r.model, r.model_label);
+  });
+}
+
 function pretty(model) {
-  if (PRETTY_CACHE.has(model)) return PRETTY_CACHE.get(model);
-  const row = (usageState.data && usageState.data.models || []).find((m) => m.model === model)
-    || (usageState.data && usageState.data.timeline || []).find((m) => m.model === model);
-  const label = row ? row.model_label : model;
-  PRETTY_CACHE.set(model, label);
-  return label;
+  return PRETTY_CACHE.get(model) || model;
 }
 
 // ---------- heatmap ----------
