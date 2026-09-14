@@ -19,3 +19,6 @@ com.armandbriere.llm-dashboard.plist
 .DS_Store
 .idea/
 .vscode/
+
+# Playwright MCP scratch output (screenshots, console logs)
+.playwright-mcp/
