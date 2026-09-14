@@ -1,0 +1,56 @@
+[   49699ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8090/api/subscriptions:0
+[   49699ms] [ERROR] Failed to load subscriptions: TypeError: Failed to fetch
+    at loadSubscriptions (http://localhost:8090/static/app.js?v=7.0:333:23)
+    at http://localhost:8090/static/app.js?v=7.0:326:11 @ http://localhost:8090/static/app.js?v=7.0:343
+[   49700ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8090/api/snapshots?date=2026-09-14&start_hour=7&end_hour=21:0
+[   49700ms] [ERROR] Failed to load the burndown view: TypeError: Failed to fetch
+    at fetchJson (http://localhost:8090/static/app.js?v=7.0:49:21)
+    at cachedJson (http://localhost:8090/static/app.js?v=7.0:56:28)
+    at loadSnapshotsAndRenderChart (http://localhost:8090/static/app.js?v=7.0:712:42)
+    at Object.load (http://localhost:8090/static/nav.js?v=7.0:41:22)
+    at runViewLoad (http://localhost:8090/static/nav.js?v=7.0:160:16)
+    at refreshCurrentView (http://localhost:8090/static/nav.js?v=7.0:172:10)
+    at http://localhost:8090/static/app.js?v=7.0:327:11 @ http://localhost:8090/static/nav.js?v=7.0:162
+[   49701ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8090/api/events?limit=50&date=2026-09-14:0
+[   79698ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8090/api/subscriptions:0
+[   79699ms] [ERROR] Failed to load subscriptions: TypeError: Failed to fetch
+    at loadSubscriptions (http://localhost:8090/static/app.js?v=7.0:333:23)
+    at http://localhost:8090/static/app.js?v=7.0:326:11 @ http://localhost:8090/static/app.js?v=7.0:343
+[   79699ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8090/api/snapshots?date=2026-09-14&start_hour=7&end_hour=21:0
+[   79699ms] [ERROR] Failed to load the burndown view: TypeError: Failed to fetch
+    at fetchJson (http://localhost:8090/static/app.js?v=7.0:49:21)
+    at cachedJson (http://localhost:8090/static/app.js?v=7.0:56:28)
+    at loadSnapshotsAndRenderChart (http://localhost:8090/static/app.js?v=7.0:712:42)
+    at Object.load (http://localhost:8090/static/nav.js?v=7.0:41:22)
+    at runViewLoad (http://localhost:8090/static/nav.js?v=7.0:160:16)
+    at refreshCurrentView (http://localhost:8090/static/nav.js?v=7.0:172:10)
+    at http://localhost:8090/static/app.js?v=7.0:327:11 @ http://localhost:8090/static/nav.js?v=7.0:162
+[   79699ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8090/api/events?limit=50&date=2026-09-14:0
+[  109699ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8090/api/subscriptions:0
+[  109699ms] [ERROR] Failed to load subscriptions: TypeError: Failed to fetch
+    at loadSubscriptions (http://localhost:8090/static/app.js?v=7.0:333:23)
+    at http://localhost:8090/static/app.js?v=7.0:326:11 @ http://localhost:8090/static/app.js?v=7.0:343
+[  109699ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8090/api/snapshots?date=2026-09-14&start_hour=7&end_hour=21:0
+[  109699ms] [ERROR] Failed to load the burndown view: TypeError: Failed to fetch
+    at fetchJson (http://localhost:8090/static/app.js?v=7.0:49:21)
+    at cachedJson (http://localhost:8090/static/app.js?v=7.0:56:28)
+    at loadSnapshotsAndRenderChart (http://localhost:8090/static/app.js?v=7.0:712:42)
+    at Object.load (http://localhost:8090/static/nav.js?v=7.0:41:22)
+    at runViewLoad (http://localhost:8090/static/nav.js?v=7.0:160:16)
+    at refreshCurrentView (http://localhost:8090/static/nav.js?v=7.0:172:10)
+    at http://localhost:8090/static/app.js?v=7.0:327:11 @ http://localhost:8090/static/nav.js?v=7.0:162
+[  109700ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8090/api/events?limit=50&date=2026-09-14:0
+[  139700ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8090/api/subscriptions:0
+[  139700ms] [ERROR] Failed to load subscriptions: TypeError: Failed to fetch
+    at loadSubscriptions (http://localhost:8090/static/app.js?v=7.0:333:23)
+    at http://localhost:8090/static/app.js?v=7.0:326:11 @ http://localhost:8090/static/app.js?v=7.0:343
+[  139703ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8090/api/snapshots?date=2026-09-14&start_hour=7&end_hour=21:0
+[  139703ms] [ERROR] Failed to load the burndown view: TypeError: Failed to fetch
+    at fetchJson (http://localhost:8090/static/app.js?v=7.0:49:21)
+    at cachedJson (http://localhost:8090/static/app.js?v=7.0:56:28)
+    at loadSnapshotsAndRenderChart (http://localhost:8090/static/app.js?v=7.0:712:42)
+    at Object.load (http://localhost:8090/static/nav.js?v=7.0:41:22)
+    at runViewLoad (http://localhost:8090/static/nav.js?v=7.0:160:16)
+    at refreshCurrentView (http://localhost:8090/static/nav.js?v=7.0:172:10)
+    at http://localhost:8090/static/app.js?v=7.0:327:11 @ http://localhost:8090/static/nav.js?v=7.0:162
+[  139703ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8090/api/events?limit=50&date=2026-09-14:0
