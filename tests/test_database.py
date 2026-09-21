@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -100,17 +101,19 @@ def test_snapshot_filtering(temp_db):
     sub = upsert_subscription(email="filter@vooban.com", db_path=temp_db)
     sub_id = sub["id"]
 
-    # Local time is EDT (UTC-4).
-    # 06:30 local = 10:30 UTC
-    # 14:15 local = 18:15 UTC
-    # 22:00 local = 02:00 UTC (next day 2026-09-09)
+    # The filters work in the machine's local time (SQLite 'localtime'), so
+    # build the timestamps from local wall-clock times and let the test run
+    # in any timezone: 06:30, 14:15 and 22:00 on 2026-09-08.
+    def local(hour, minute):
+        return datetime(2026, 9, 8, hour, minute).astimezone(UTC).isoformat()
+
     insert_snapshot(
         subscription_id=sub_id,
         five_hour_pct=50.0,
         five_hour_resets_at=None,
         seven_day_pct=20.0,
         seven_day_resets_at=None,
-        timestamp="2026-09-08T10:30:00+00:00",
+        timestamp=local(6, 30),
         db_path=temp_db,
     )
     insert_snapshot(
@@ -119,7 +122,7 @@ def test_snapshot_filtering(temp_db):
         five_hour_resets_at=None,
         seven_day_pct=22.0,
         seven_day_resets_at=None,
-        timestamp="2026-09-08T18:15:00+00:00",
+        timestamp=local(14, 15),
         db_path=temp_db,
     )
     insert_snapshot(
@@ -128,7 +131,7 @@ def test_snapshot_filtering(temp_db):
         five_hour_resets_at=None,
         seven_day_pct=25.0,
         seven_day_resets_at=None,
-        timestamp="2026-09-09T02:00:00+00:00",
+        timestamp=local(22, 0),
         db_path=temp_db,
     )
 
