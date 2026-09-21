@@ -98,7 +98,9 @@ remembering whether `uv.lock` moved.
 
 `make` covers every row unconditionally: `make restart` diffs the rendered plist
 against the template and escalates to `service.sh install` when they differ, so
-you never have to remember which of the two a change needed.
+you never have to remember which of the two a change needed. `service.sh
+restart` also bootstraps the agent when it is not loaded at all, so a deploy
+after `make stop`, an `uninstall`, or a logout works the same as any other.
 
 Frontend changes need no restart _and_ no hard reload: `StaticFiles` re-reads
 from disk per request, and the `add_no_cache_headers` middleware in
@@ -166,6 +168,19 @@ so the pass records 0 accounts:
 This is not a failed deploy. The chart may look empty or stalled until the next
 successful poll (one `LLM_DASHBOARD_POLL_SECONDS`, 5 minutes by default). Restarting repeatedly to "fix" it makes the 429s
 worse. Confirm recovery with `curl -s http://127.0.0.1:8000/api/status`.
+
+**Never `sudo make`.** Nothing in the deploy wants privileges. The dashboard is
+a _per-user_ LaunchAgent living in the `gui/<uid>` domain, and under `sudo` the
+uid is 0 — a domain that does not exist — so launchctl fails with an opaque
+
+```
+Could not kickstart service "com.armandbriere.llm-dashboard": 125: Domain does not support specified action
+```
+
+Worse than the failure is what precedes it: `git fetch` and `uv sync` have
+already run as root and can leave root-owned files in the runtime checkout and
+the uv cache, which then break the _next_ unprivileged deploy. `make` and
+`service.sh` both refuse to run as root for this reason. Run them as yourself.
 
 **Port 8000 may already be taken by a foreground run.** `./start.sh` in a
 terminal owns the port and the service cannot bind, so it flaps. Check with

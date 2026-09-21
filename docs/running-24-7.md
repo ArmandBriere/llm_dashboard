@@ -182,7 +182,14 @@ the keychain is local to this Mac.
 **`status` says "is not loaded"**
 The agent was never bootstrapped, or you are in a non-GUI session (SSH).
 `LimitLoadToSessionType = Aqua` means it will not load over SSH. Run
-`./service.sh install` from a normal desktop terminal.
+`./service.sh install` from a normal desktop terminal — or just
+`./service.sh restart`, which installs when it finds nothing to kickstart.
+
+**`125: Domain does not support specified action`**
+You ran it with `sudo`. The agent lives in `gui/<uid>`; as root that is `gui/0`,
+which is not a domain launchctl will act on. Both `service.sh` and the `Makefile`
+now refuse to run as root, so this only appears on an older checkout. Drop the
+`sudo` — see the deploy gotcha in [deploying.md](deploying.md).
 
 **Service flaps: `last exit code` is non-zero and the PID keeps changing**
 Read `~/Library/Logs/llm-dashboard/stderr.log`. Most common causes: port 8000
