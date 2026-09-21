@@ -25,6 +25,9 @@ package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `backend` is imported from the repo root; this makes the bare `pytest`
+# entrypoint behave like `python -m pytest`.
+pythonpath = ["."]
 addopts = "-q"
 filterwarnings = [
     # Starlette's TestClient warns about the httpx transport it ships with.
