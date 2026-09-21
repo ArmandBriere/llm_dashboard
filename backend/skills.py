@@ -27,8 +27,9 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from backend.database import get_db
 
@@ -356,7 +357,11 @@ class SkillRecorder:
             return
         match = BASE_DIR_RE.search(text)
         base_dir = match.group(1) if match else None
-        info = parse_skill_base_dir(base_dir) if base_dir else {"source": "unknown", "marketplace": None, "version": None, "plugin": None}
+        info = (
+            parse_skill_base_dir(base_dir)
+            if base_dir
+            else {"source": "unknown", "marketplace": None, "version": None, "plugin": None}
+        )
         self.conn.execute(
             """
             UPDATE usage_skill_invocations
@@ -388,7 +393,8 @@ class SkillRecorder:
                     message_id, request_id, model, is_sidechain, tool_name, tool_kind, server, plugin, target, calls
                 ) VALUES (
                     :file_id, :account_key, :subscription_id, :session_id, :project, :timestamp,
-                    :message_id, :request_id, :model, :is_sidechain, :tool_name, :tool_kind, :server, :plugin, :target, :calls
+                    :message_id, :request_id, :model, :is_sidechain, :tool_name, :tool_kind,
+                    :server, :plugin, :target, :calls
                 )
                 ON CONFLICT(account_key, message_id, request_id, tool_name) DO UPDATE SET
                     calls = usage_tool_calls.calls + excluded.calls
@@ -492,7 +498,7 @@ def _attribute_turns(conn, subscription_ids, date_str, start_hour, end_hour) -> 
         while pending and pending[0][0] <= r["timestamp"]:
             active = pending.pop(0)[1]
         bucket = unattributed if active is None else per_skill.setdefault(active, _blank_totals())
-        for target in ((bucket,) if active is None else (bucket, attributed)):
+        for target in (bucket,) if active is None else (bucket, attributed):
             target["turns"] += 1
             target["total_tokens"] += r["total_tokens"] or 0
             target["output_tokens"] += r["output_tokens"] or 0
@@ -620,10 +626,22 @@ def get_skill_usage(
         p = plugins.setdefault(
             r["plugin"],
             {
-                "plugin": r["plugin"], "is_plugin": True, "source": "plugin", "marketplace": None,
-                "latest_version": None, "version_count": 0, "skills": [], "invocations": 0, "errors": 0,
-                "payload_tokens": 0, "attributed_turns": 0, "attributed_tokens": 0, "attributed_cost_usd": 0.0,
-                "mcp_calls": 0, "mcp_servers": [], "sessions": set(),
+                "plugin": r["plugin"],
+                "is_plugin": True,
+                "source": "plugin",
+                "marketplace": None,
+                "latest_version": None,
+                "version_count": 0,
+                "skills": [],
+                "invocations": 0,
+                "errors": 0,
+                "payload_tokens": 0,
+                "attributed_turns": 0,
+                "attributed_tokens": 0,
+                "attributed_cost_usd": 0.0,
+                "mcp_calls": 0,
+                "mcp_servers": [],
+                "sessions": set(),
             },
         )
         p["mcp_calls"] += r["calls"]

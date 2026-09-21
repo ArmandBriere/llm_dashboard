@@ -47,7 +47,13 @@ def _turn(session, ts, msg_id, uuid, tools=(), model="claude-opus-5", sidechain=
             "cwd": "/Users/a/src/proj",
             "gitBranch": "main",
             "requestId": f"req-{msg_id}",
-            "message": {"id": msg_id, "model": model, "role": "assistant", "content": content, "usage": _usage(out=out)},
+            "message": {
+                "id": msg_id,
+                "model": model,
+                "role": "assistant",
+                "content": content,
+                "usage": _usage(out=out),
+            },
         }
     )
 
@@ -59,8 +65,12 @@ def _launch_result(session, ts, tool_use_id, uuid, skill):
             "uuid": uuid,
             "sessionId": session,
             "timestamp": ts,
-            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_use_id,
-                                                     "content": f"Launching skill: {skill}"}]},
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": tool_use_id, "content": f"Launching skill: {skill}"}
+                ],
+            },
             "toolUseResult": {"success": True, "commandName": skill},
         }
     )
@@ -73,9 +83,17 @@ def _error_result(session, ts, tool_use_id, uuid, skill):
             "uuid": uuid,
             "sessionId": session,
             "timestamp": ts,
-            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_use_id,
-                                                     "is_error": True,
-                                                     "content": f"<tool_use_error>Unknown skill: {skill}</tool_use_error>"}]},
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "is_error": True,
+                        "content": f"<tool_use_error>Unknown skill: {skill}</tool_use_error>",
+                    }
+                ],
+            },
         }
     )
 
@@ -88,7 +106,10 @@ def _payload(session, ts, parent_uuid, uuid, base_dir, body):
             "parentUuid": parent_uuid,
             "sessionId": session,
             "timestamp": ts,
-            "message": {"role": "user", "content": [{"type": "text", "text": f"Base directory for this skill: {base_dir}\n\n{body}"}]},
+            "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": f"Base directory for this skill: {base_dir}\n\n{body}"}],
+            },
         }
     )
 
@@ -102,8 +123,13 @@ def env(tmp_path, monkeypatch):
     user_home = tmp_path / "home"
     default_home = user_home / ".claude"
     (default_home / "projects" / "-tmp-proj").mkdir(parents=True)
-    sub = upsert_subscription(email="a@vooban.com", account_uuid="u1", organization_name="Vooban",
-                              keychain_service=keychain_service_for_home(default_home), is_active=True)
+    sub = upsert_subscription(
+        email="a@vooban.com",
+        account_uuid="u1",
+        organization_name="Vooban",
+        keychain_service=keychain_service_for_home(default_home),
+        is_active=True,
+    )
     return {"home": user_home, "default": default_home, "sub_id": sub["id"]}
 
 
@@ -175,11 +201,17 @@ def test_classify_tool_falls_back_when_the_plugin_is_unknown():
 
 def test_scan_records_invocation_with_plugin_provenance_and_payload(env):
     sess = "11111111-1111-1111-1111-111111111111"
-    _write(env, sess, [
-        _turn(sess, "2026-09-09T10:00:00.000Z", "m1", "u1", tools=[("Skill", {"skill": "git:pr", "args": "draft"})]),
-        _launch_result(sess, "2026-09-09T10:00:01.000Z", "m1-0", "u2", "git:pr"),
-        _payload(sess, "2026-09-09T10:00:02.000Z", "u2", "u3", PLUGIN_DIR, "x" * 396),
-    ])
+    _write(
+        env,
+        sess,
+        [
+            _turn(
+                sess, "2026-09-09T10:00:00.000Z", "m1", "u1", tools=[("Skill", {"skill": "git:pr", "args": "draft"})]
+            ),
+            _launch_result(sess, "2026-09-09T10:00:01.000Z", "m1-0", "u2", "git:pr"),
+            _payload(sess, "2026-09-09T10:00:02.000Z", "u2", "u3", PLUGIN_DIR, "x" * 396),
+        ],
+    )
     scan_transcripts(user_home=env["home"])
 
     skills = get_skill_usage()["skills"]
@@ -194,11 +226,15 @@ def test_scan_records_invocation_with_plugin_provenance_and_payload(env):
 
 def test_failed_invocation_is_counted_but_attributed_nothing(env):
     sess = "22222222-2222-2222-2222-222222222222"
-    _write(env, sess, [
-        _turn(sess, "2026-09-09T10:00:00.000Z", "m1", "u1", tools=[("Skill", {"skill": "ghost:skill"})]),
-        _error_result(sess, "2026-09-09T10:00:01.000Z", "m1-0", "u2", "ghost:skill"),
-        _turn(sess, "2026-09-09T10:01:00.000Z", "m2", "u3", out=500),
-    ])
+    _write(
+        env,
+        sess,
+        [
+            _turn(sess, "2026-09-09T10:00:00.000Z", "m1", "u1", tools=[("Skill", {"skill": "ghost:skill"})]),
+            _error_result(sess, "2026-09-09T10:00:01.000Z", "m1-0", "u2", "ghost:skill"),
+            _turn(sess, "2026-09-09T10:01:00.000Z", "m2", "u3", out=500),
+        ],
+    )
     scan_transcripts(user_home=env["home"])
 
     data = get_skill_usage()
@@ -212,17 +248,21 @@ def test_failed_invocation_is_counted_but_attributed_nothing(env):
 
 def test_turns_are_attributed_to_the_most_recently_loaded_skill(env):
     sess = "33333333-3333-3333-3333-333333333333"
-    _write(env, sess, [
-        # One turn before any skill, then two skills back to back.
-        _turn(sess, "2026-09-09T10:00:00.000Z", "m0", "a0", out=10),
-        _turn(sess, "2026-09-09T10:01:00.000Z", "m1", "a1", tools=[("Skill", {"skill": "git:pr"})]),
-        _launch_result(sess, "2026-09-09T10:01:01.000Z", "m1-0", "a2", "git:pr"),
-        _payload(sess, "2026-09-09T10:01:02.000Z", "a2", "a3", PLUGIN_DIR, "pr instructions"),
-        _turn(sess, "2026-09-09T10:02:00.000Z", "m2", "a4", out=100),
-        _turn(sess, "2026-09-09T10:03:00.000Z", "m3", "a5", tools=[("Skill", {"skill": "docs:notion"})]),
-        _launch_result(sess, "2026-09-09T10:03:01.000Z", "m3-0", "a6", "docs:notion"),
-        _turn(sess, "2026-09-09T10:04:00.000Z", "m4", "a7", out=200),
-    ])
+    _write(
+        env,
+        sess,
+        [
+            # One turn before any skill, then two skills back to back.
+            _turn(sess, "2026-09-09T10:00:00.000Z", "m0", "a0", out=10),
+            _turn(sess, "2026-09-09T10:01:00.000Z", "m1", "a1", tools=[("Skill", {"skill": "git:pr"})]),
+            _launch_result(sess, "2026-09-09T10:01:01.000Z", "m1-0", "a2", "git:pr"),
+            _payload(sess, "2026-09-09T10:01:02.000Z", "a2", "a3", PLUGIN_DIR, "pr instructions"),
+            _turn(sess, "2026-09-09T10:02:00.000Z", "m2", "a4", out=100),
+            _turn(sess, "2026-09-09T10:03:00.000Z", "m3", "a5", tools=[("Skill", {"skill": "docs:notion"})]),
+            _launch_result(sess, "2026-09-09T10:03:01.000Z", "m3-0", "a6", "docs:notion"),
+            _turn(sess, "2026-09-09T10:04:00.000Z", "m4", "a7", out=200),
+        ],
+    )
     scan_transcripts(user_home=env["home"])
 
     data = get_skill_usage()
@@ -238,18 +278,27 @@ def test_turns_are_attributed_to_the_most_recently_loaded_skill(env):
 def test_a_subagent_skill_does_not_capture_the_main_thread(env):
     """Subagents share the parent's session id but write their own transcript."""
     sess = "44444444-4444-4444-4444-444444444444"
-    _write(env, sess, [
-        _turn(sess, "2026-09-09T10:00:00.000Z", "m1", "b1", out=10),
-        _turn(sess, "2026-09-09T10:05:00.000Z", "m2", "b2", out=20),
-    ])
+    _write(
+        env,
+        sess,
+        [
+            _turn(sess, "2026-09-09T10:00:00.000Z", "m1", "b1", out=10),
+            _turn(sess, "2026-09-09T10:05:00.000Z", "m2", "b2", out=20),
+        ],
+    )
     nested = env["default"] / "projects" / "-tmp-proj" / sess / "subagents"
     nested.mkdir(parents=True)
     (nested / "agent-x.jsonl").write_text(
-        "\n".join([
-            _turn(sess, "2026-09-09T10:01:00.000Z", "s1", "c1", tools=[("Skill", {"skill": "git:pr"})], sidechain=True),
-            _launch_result(sess, "2026-09-09T10:01:01.000Z", "s1-0", "c2", "git:pr"),
-            _turn(sess, "2026-09-09T10:02:00.000Z", "s2", "c3", sidechain=True, out=30),
-        ]) + "\n"
+        "\n".join(
+            [
+                _turn(
+                    sess, "2026-09-09T10:01:00.000Z", "s1", "c1", tools=[("Skill", {"skill": "git:pr"})], sidechain=True
+                ),
+                _launch_result(sess, "2026-09-09T10:01:01.000Z", "s1-0", "c2", "git:pr"),
+                _turn(sess, "2026-09-09T10:02:00.000Z", "s2", "c3", sidechain=True, out=30),
+            ]
+        )
+        + "\n"
     )
     scan_transcripts(user_home=env["home"])
 
@@ -262,16 +311,28 @@ def test_a_subagent_skill_does_not_capture_the_main_thread(env):
 def test_plugins_roll_up_skills_and_their_mcp_tools(env):
     sess = "55555555-5555-5555-5555-555555555555"
     ts_dir = "/Users/a/.claude/plugins/cache/monad-tools/code-quality/0.20.0/skills/typescript"
-    _write(env, sess, [
-        _turn(sess, "2026-09-09T10:00:00.000Z", "m1", "d1", tools=[("Skill", {"skill": "code-quality:typescript"})]),
-        _launch_result(sess, "2026-09-09T10:00:01.000Z", "m1-0", "d2", "code-quality:typescript"),
-        _payload(sess, "2026-09-09T10:00:02.000Z", "d2", "d3", ts_dir, "ts rules"),
-        _turn(sess, "2026-09-09T10:01:00.000Z", "m2", "d4", tools=[
-            ("mcp__plugin_code-quality_playwright__browser_navigate", {}),
-            ("mcp__plugin_code-quality_playwright__browser_take_screenshot", {}),
-            ("Bash", {}),
-        ]),
-    ])
+    _write(
+        env,
+        sess,
+        [
+            _turn(
+                sess, "2026-09-09T10:00:00.000Z", "m1", "d1", tools=[("Skill", {"skill": "code-quality:typescript"})]
+            ),
+            _launch_result(sess, "2026-09-09T10:00:01.000Z", "m1-0", "d2", "code-quality:typescript"),
+            _payload(sess, "2026-09-09T10:00:02.000Z", "d2", "d3", ts_dir, "ts rules"),
+            _turn(
+                sess,
+                "2026-09-09T10:01:00.000Z",
+                "m2",
+                "d4",
+                tools=[
+                    ("mcp__plugin_code-quality_playwright__browser_navigate", {}),
+                    ("mcp__plugin_code-quality_playwright__browser_take_screenshot", {}),
+                    ("Bash", {}),
+                ],
+            ),
+        ],
+    )
     scan_transcripts(user_home=env["home"])
 
     plugin = get_skill_usage()["plugins"][0]
@@ -287,27 +348,42 @@ def test_plugins_roll_up_skills_and_their_mcp_tools(env):
 
 def test_sessions_list_the_skills_they_invoked(env):
     sess = "66666666-6666-6666-6666-666666666666"
-    _write(env, sess, [
-        _turn(sess, "2026-09-09T10:00:00.000Z", "m1", "e1", tools=[("Skill", {"skill": "git:pr"})]),
-        _launch_result(sess, "2026-09-09T10:00:01.000Z", "m1-0", "e2", "git:pr"),
-        _turn(sess, "2026-09-09T10:01:00.000Z", "m2", "e3", tools=[("Skill", {"skill": "git:pr"})]),
-        _launch_result(sess, "2026-09-09T10:01:01.000Z", "m2-0", "e4", "git:pr"),
-    ])
+    _write(
+        env,
+        sess,
+        [
+            _turn(sess, "2026-09-09T10:00:00.000Z", "m1", "e1", tools=[("Skill", {"skill": "git:pr"})]),
+            _launch_result(sess, "2026-09-09T10:00:01.000Z", "m1-0", "e2", "git:pr"),
+            _turn(sess, "2026-09-09T10:01:00.000Z", "m2", "e3", tools=[("Skill", {"skill": "git:pr"})]),
+            _launch_result(sess, "2026-09-09T10:01:01.000Z", "m2-0", "e4", "git:pr"),
+        ],
+    )
     scan_transcripts(user_home=env["home"])
 
     session = get_usage_sessions()[0]
     assert session["skills"] == [
-        {"session_id": sess, "skill": "git:pr", "plugin": "git", "skill_name": "pr",
-         "invocations": 2, "errors": 0, "payload_tokens": 0}
+        {
+            "session_id": sess,
+            "skill": "git:pr",
+            "plugin": "git",
+            "skill_name": "pr",
+            "invocations": 2,
+            "errors": 0,
+            "payload_tokens": 0,
+        }
     ]
 
 
 def test_rescanning_an_appended_transcript_does_not_double_count(env):
     """The launch result and instructions can arrive in a later scan pass."""
     sess = "77777777-7777-7777-7777-777777777777"
-    path = _write(env, sess, [
-        _turn(sess, "2026-09-09T10:00:00.000Z", "m1", "f1", tools=[("Skill", {"skill": "git:pr"}), ("Bash", {})]),
-    ])
+    path = _write(
+        env,
+        sess,
+        [
+            _turn(sess, "2026-09-09T10:00:00.000Z", "m1", "f1", tools=[("Skill", {"skill": "git:pr"}), ("Bash", {})]),
+        ],
+    )
     scan_transcripts(user_home=env["home"])
     assert get_skill_usage()["skills"][0]["invocations"] == 1
 
@@ -325,12 +401,16 @@ def test_rescanning_an_appended_transcript_does_not_double_count(env):
 
 def test_filters_narrow_skills_to_the_selected_day_and_account(env):
     sess = "88888888-8888-8888-8888-888888888888"
-    _write(env, sess, [
-        _turn(sess, "2026-09-08T10:00:00.000Z", "m1", "g1", tools=[("Skill", {"skill": "git:pr"})]),
-        _launch_result(sess, "2026-09-08T10:00:01.000Z", "m1-0", "g2", "git:pr"),
-        _turn(sess, "2026-09-09T10:00:00.000Z", "m2", "g3", tools=[("Skill", {"skill": "docs:notion"})]),
-        _launch_result(sess, "2026-09-09T10:00:01.000Z", "m2-0", "g4", "docs:notion"),
-    ])
+    _write(
+        env,
+        sess,
+        [
+            _turn(sess, "2026-09-08T10:00:00.000Z", "m1", "g1", tools=[("Skill", {"skill": "git:pr"})]),
+            _launch_result(sess, "2026-09-08T10:00:01.000Z", "m1-0", "g2", "git:pr"),
+            _turn(sess, "2026-09-09T10:00:00.000Z", "m2", "g3", tools=[("Skill", {"skill": "docs:notion"})]),
+            _launch_result(sess, "2026-09-09T10:00:01.000Z", "m2-0", "g4", "docs:notion"),
+        ],
+    )
     scan_transcripts(user_home=env["home"])
 
     from datetime import datetime

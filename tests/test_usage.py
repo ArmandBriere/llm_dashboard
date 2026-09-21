@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 
 import pytest
 
@@ -21,7 +20,9 @@ from backend.usage import (
 
 
 def _assistant_line(session, ts, model, msg_id, req_id, usage, tools=0, sidechain=False, cwd="/Users/a/src/proj"):
-    content = [{"type": "text", "text": "hi"}] + [{"type": "tool_use", "id": f"t{i}", "name": "Bash", "input": {}} for i in range(tools)]
+    content = [{"type": "text", "text": "hi"}] + [
+        {"type": "tool_use", "id": f"t{i}", "name": "Bash", "input": {}} for i in range(tools)
+    ]
     return json.dumps(
         {
             "parentUuid": None,
@@ -62,11 +63,29 @@ def env(tmp_path, monkeypatch):
     (default_home / "projects" / "-tmp-proj").mkdir(parents=True)
     (labs_home / "projects" / "-tmp-proj").mkdir(parents=True)
 
-    vooban = upsert_subscription(email="a@vooban.com", account_uuid="u2", organization_name="Vooban",
-                                 organization_uuid="o2", keychain_service="Claude Code-credentials", is_active=True)
-    labs = upsert_subscription(email="a@labs.com", account_uuid="u1", organization_name="Labs",
-                               organization_uuid="o1", keychain_service=keychain_service_for_home(labs_home), is_active=False)
-    return {"home": user_home, "default": default_home, "labs": labs_home, "vooban_id": vooban["id"], "labs_id": labs["id"]}
+    vooban = upsert_subscription(
+        email="a@vooban.com",
+        account_uuid="u2",
+        organization_name="Vooban",
+        organization_uuid="o2",
+        keychain_service="Claude Code-credentials",
+        is_active=True,
+    )
+    labs = upsert_subscription(
+        email="a@labs.com",
+        account_uuid="u1",
+        organization_name="Labs",
+        organization_uuid="o1",
+        keychain_service=keychain_service_for_home(labs_home),
+        is_active=False,
+    )
+    return {
+        "home": user_home,
+        "default": default_home,
+        "labs": labs_home,
+        "vooban_id": vooban["id"],
+        "labs_id": labs["id"],
+    }
 
 
 def test_keychain_service_hash_matches_claude_code_convention(tmp_path):
@@ -81,10 +100,25 @@ def test_scan_dedupes_streamed_lines_and_maps_accounts(env):
     f = env["default"] / "projects" / "-tmp-proj" / f"{sess}.jsonl"
     lines = [
         json.dumps({"type": "ai-title", "aiTitle": "Fix the widget", "sessionId": sess}),
-        json.dumps({"type": "user", "isSidechain": False, "sessionId": sess, "timestamp": "2026-09-09T10:00:00.000Z",
-                    "message": {"role": "user", "content": "Please fix the widget"}}),
+        json.dumps(
+            {
+                "type": "user",
+                "isSidechain": False,
+                "sessionId": sess,
+                "timestamp": "2026-09-09T10:00:00.000Z",
+                "message": {"role": "user", "content": "Please fix the widget"},
+            }
+        ),
         # Same message streamed as two lines: partial usage first, then final; one tool call each.
-        _assistant_line(sess, "2026-09-09T10:00:05.000Z", "claude-opus-5", "m1", "r1", {"input_tokens": 10, "output_tokens": 0}, tools=1),
+        _assistant_line(
+            sess,
+            "2026-09-09T10:00:05.000Z",
+            "claude-opus-5",
+            "m1",
+            "r1",
+            {"input_tokens": 10, "output_tokens": 0},
+            tools=1,
+        ),
         _assistant_line(sess, "2026-09-09T10:00:06.000Z", "claude-opus-5", "m1", "r1", _usage(out=80), tools=1),
         _assistant_line(sess, "2026-09-09T10:01:00.000Z", "claude-sonnet-5", "m2", "r2", _usage(out=20)),
         # Synthetic error rows carry no real usage and must be ignored.
@@ -97,7 +131,10 @@ def test_scan_dedupes_streamed_lines_and_maps_accounts(env):
     nested = env["labs"] / "projects" / "-tmp-proj" / sess2 / "subagents"
     nested.mkdir(parents=True)
     (nested / "agent-abc.jsonl").write_text(
-        _assistant_line(sess2, "2026-09-09T11:00:00.000Z", "claude-fable-5-1", "m9", "r9", _usage(out=300), sidechain=True) + "\n"
+        _assistant_line(
+            sess2, "2026-09-09T11:00:00.000Z", "claude-fable-5-1", "m9", "r9", _usage(out=300), sidechain=True
+        )
+        + "\n"
     )
 
     result = scan_transcripts(user_home=env["home"])
@@ -155,10 +192,22 @@ def test_five_hour_windows_attribute_models_by_share(env):
     sub = env["vooban_id"]
     # Deadline 17:00Z, so the window is 12:00Z-17:00Z. The API jitters the
     # deadline by a few hundred ms between polls; those are one window.
-    insert_snapshot(subscription_id=sub, five_hour_pct=10, five_hour_resets_at="2026-09-09T17:00:00.100+00:00",
-                    seven_day_pct=5, seven_day_resets_at=None, timestamp="2026-09-09T12:30:00+00:00")
-    insert_snapshot(subscription_id=sub, five_hour_pct=40, five_hour_resets_at="2026-09-09T16:59:59.900+00:00",
-                    seven_day_pct=5, seven_day_resets_at=None, timestamp="2026-09-09T14:30:00+00:00")
+    insert_snapshot(
+        subscription_id=sub,
+        five_hour_pct=10,
+        five_hour_resets_at="2026-09-09T17:00:00.100+00:00",
+        seven_day_pct=5,
+        seven_day_resets_at=None,
+        timestamp="2026-09-09T12:30:00+00:00",
+    )
+    insert_snapshot(
+        subscription_id=sub,
+        five_hour_pct=40,
+        five_hour_resets_at="2026-09-09T16:59:59.900+00:00",
+        seven_day_pct=5,
+        seven_day_resets_at=None,
+        timestamp="2026-09-09T14:30:00+00:00",
+    )
 
     windows = get_five_hour_windows(subscription_ids=[sub])
     assert len(windows) == 1

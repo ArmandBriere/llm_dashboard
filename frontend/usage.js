@@ -123,7 +123,9 @@ function fmtRelative(iso) {
 }
 
 function weightOf(row) {
-  return state.usageWeight === "tokens" ? Number(row.total_tokens) || 0 : Number(row.est_cost_usd) || 0;
+  return state.usageWeight === "tokens"
+    ? Number(row.total_tokens) || 0
+    : Number(row.est_cost_usd) || 0;
 }
 
 function fmtWeight(v) {
@@ -247,9 +249,10 @@ function scopeLabel() {
   const dateStr = getSelectedDateString();
   if (!dateStr) return "all time";
   const today = dateStr === getLocalDateString(new Date());
-  const hours = state.startHour === 0 && state.endHour === 23
-    ? ""
-    : `, ${formatHourLabel(state.startHour)} – ${formatHourLabel(state.endHour + 1)}`;
+  const hours =
+    state.startHour === 0 && state.endHour === 23
+      ? ""
+      : `, ${formatHourLabel(state.startHour)} – ${formatHourLabel(state.endHour + 1)}`;
   return `${today ? "today" : dateStr}${hours}`;
 }
 
@@ -261,7 +264,10 @@ function renderUsageMeta(summary) {
   if (summary.last_scanned_at) parts.push(`scanned ${fmtRelative(summary.last_scanned_at)}`);
   if (summary.first_turn) {
     const first = parseIsoDate(summary.first_turn);
-    if (first) parts.push(`history since ${first.toLocaleDateString([], { month: "short", day: "numeric" })}`);
+    if (first)
+      parts.push(
+        `history since ${first.toLocaleDateString([], { month: "short", day: "numeric" })}`,
+      );
   }
   el.textContent = parts.join(" · ");
 }
@@ -282,22 +288,53 @@ function renderUsageStats(summary) {
     el.innerHTML = `<div class="empty-state">No Claude Code activity for ${escapeHtml(scopeLabel())}.</div>`;
     return;
   }
-  const perAccount = (summary.per_account || []).map((a) => {
-    const sub = subById(a.subscription_id);
-    const color = getAccountColor(sub || a.subscription_id);
-    return `<span class="stat-split" style="--account:${color.line}">${escapeHtml(sub ? accountName(sub) : a.account_key)} ${fmtWeight(weightOf(a))}</span>`;
-  }).join("");
-  const outputShare = summary.total_tokens ? (summary.output_tokens / summary.total_tokens) * 100 : 0;
-  const thinkShare = summary.output_tokens ? (summary.thinking_tokens / summary.output_tokens) * 100 : 0;
+  const perAccount = (summary.per_account || [])
+    .map((a) => {
+      const sub = subById(a.subscription_id);
+      const color = getAccountColor(sub || a.subscription_id);
+      return `<span class="stat-split" style="--account:${color.line}">${escapeHtml(sub ? accountName(sub) : a.account_key)} ${fmtWeight(weightOf(a))}</span>`;
+    })
+    .join("");
+  const outputShare = summary.total_tokens
+    ? (summary.output_tokens / summary.total_tokens) * 100
+    : 0;
+  const thinkShare = summary.output_tokens
+    ? (summary.thinking_tokens / summary.output_tokens) * 100
+    : 0;
   const perSession = summary.sessions ? summary.total_tokens / summary.sessions : 0;
 
   el.innerHTML = [
-    statTile("Sessions", fmtInt(summary.sessions), `${fmtInt(summary.turns)} model turns · ${fmtInt(summary.sidechain_turns)} by subagents`),
-    statTile("Tokens processed", fmtTokens(summary.total_tokens), `${fmtTokens(perSession)} per session · ${fmtPct(outputShare)} output`),
-    statTile("Output tokens", fmtTokens(summary.output_tokens), `${fmtPct(thinkShare, 0)} of it thinking`),
-    statTile("Cache hit rate", fmtPct(summary.cache_hit_ratio * 100, 1), `${fmtTokens(summary.cache_read_tokens)} read from cache`),
-    statTile("Tool calls", fmtInt(summary.tool_calls), `${(summary.turns ? summary.tool_calls / summary.turns : 0).toFixed(1)} per turn`),
-    statTile("Est. API cost", fmtUSD(summary.est_cost_usd), perAccount || "what this would cost on pay-as-you-go", "stat-wide"),
+    statTile(
+      "Sessions",
+      fmtInt(summary.sessions),
+      `${fmtInt(summary.turns)} model turns · ${fmtInt(summary.sidechain_turns)} by subagents`,
+    ),
+    statTile(
+      "Tokens processed",
+      fmtTokens(summary.total_tokens),
+      `${fmtTokens(perSession)} per session · ${fmtPct(outputShare)} output`,
+    ),
+    statTile(
+      "Output tokens",
+      fmtTokens(summary.output_tokens),
+      `${fmtPct(thinkShare, 0)} of it thinking`,
+    ),
+    statTile(
+      "Cache hit rate",
+      fmtPct(summary.cache_hit_ratio * 100, 1),
+      `${fmtTokens(summary.cache_read_tokens)} read from cache`,
+    ),
+    statTile(
+      "Tool calls",
+      fmtInt(summary.tool_calls),
+      `${(summary.turns ? summary.tool_calls / summary.turns : 0).toFixed(1)} per turn`,
+    ),
+    statTile(
+      "Est. API cost",
+      fmtUSD(summary.est_cost_usd),
+      perAccount || "what this would cost on pay-as-you-go",
+      "stat-wide",
+    ),
   ].join("");
 }
 
@@ -311,32 +348,41 @@ function renderWindows(windows) {
     return;
   }
   const byCost = state.usageWeight !== "tokens";
-  el.innerHTML = windows.map((w) => {
-    const sub = subById(w.subscription_id);
-    const color = getAccountColor(sub || w.subscription_id);
-    const shareKey = byCost ? "window_pct_by_cost" : "window_pct_by_tokens";
-    const models = (w.models || []).slice().sort((a, b) => b[shareKey] - a[shareKey]);
-    rememberModelLabels(models);
-    const segments = models.map((m) => `<div class="win-seg" style="width:${Math.max(0, Math.min(100, m[shareKey]))}%; background:${modelColor(m.model)}" title="${escapeHtml(m.model_label)} · ${fmtPct(m[shareKey])} of the window"></div>`).join("");
-    const unattributed = w.peak_pct > 0 && !models.length
-      ? `<div class="win-seg win-seg-unknown" style="width:${w.peak_pct}%" title="Utilisation with no matching local turns"></div>`
-      : "";
-    const rows = models.map((m) => {
-      const share = byCost ? m.share_cost : m.share_tokens;
-      return `
+  el.innerHTML = windows
+    .map((w) => {
+      const sub = subById(w.subscription_id);
+      const color = getAccountColor(sub || w.subscription_id);
+      const shareKey = byCost ? "window_pct_by_cost" : "window_pct_by_tokens";
+      const models = (w.models || []).slice().sort((a, b) => b[shareKey] - a[shareKey]);
+      rememberModelLabels(models);
+      const segments = models
+        .map(
+          (m) =>
+            `<div class="win-seg" style="width:${Math.max(0, Math.min(100, m[shareKey]))}%; background:${modelColor(m.model)}" title="${escapeHtml(m.model_label)} · ${fmtPct(m[shareKey])} of the window"></div>`,
+        )
+        .join("");
+      const unattributed =
+        w.peak_pct > 0 && !models.length
+          ? `<div class="win-seg win-seg-unknown" style="width:${w.peak_pct}%" title="Utilisation with no matching local turns"></div>`
+          : "";
+      const rows = models
+        .map((m) => {
+          const share = byCost ? m.share_cost : m.share_tokens;
+          return `
         <div class="win-row">
           <span class="dot" style="background:${modelColor(m.model)}"></span>
           <span class="win-model">${escapeHtml(m.model_label)}</span>
           <span class="win-pct">${fmtPct(m[shareKey])}<small> of window</small></span>
           <span class="win-detail">${fmtPct(share * 100, 0)} of ${weightLabel()} · ${fmtInt(m.turns)} turns · ${fmtTokens(m.total_tokens)} tok</span>
         </div>`;
-    }).join("");
-    const status = w.is_active
-      ? `<span class="win-status win-status-live">live · ${fmtPct(w.peak_pct, 0)} so far</span>`
-      : `<span class="win-status">peaked at ${fmtPct(w.peak_pct, 0)}</span>`;
-    const dateStr = getSelectedDateString();
-    const startLabel = dateStr ? fmtTime(w.starts_at) : fmtDateTime(w.starts_at);
-    return `
+        })
+        .join("");
+      const status = w.is_active
+        ? `<span class="win-status win-status-live">live · ${fmtPct(w.peak_pct, 0)} so far</span>`
+        : `<span class="win-status">peaked at ${fmtPct(w.peak_pct, 0)}</span>`;
+      const dateStr = getSelectedDateString();
+      const startLabel = dateStr ? fmtTime(w.starts_at) : fmtDateTime(w.starts_at);
+      return `
       <div class="win" style="--account:${color.line}">
         <div class="win-head">
           <div class="win-title">
@@ -353,7 +399,8 @@ function renderWindows(windows) {
         </div>
         <div class="win-foot">${fmtInt(w.sessions)} sessions · ${fmtInt(w.turns)} turns · ${fmtTokens(w.total_tokens)} tokens · ${fmtUSD(w.est_cost_usd)} est. · ${fmtInt(w.readings)} readings</div>
       </div>`;
-  }).join("");
+    })
+    .join("");
 }
 
 // ---------- model mix ----------
@@ -372,16 +419,21 @@ function renderModelMix(models) {
   }
   const total = models.reduce((acc, m) => acc + weightOf(m), 0) || 1;
   const sorted = models.slice().sort((a, b) => weightOf(b) - weightOf(a));
-  bar.innerHTML = sorted.map((m) => {
-    const pct = (weightOf(m) / total) * 100;
-    return `<div class="share-seg" style="width:${pct}%; background:${modelColor(m.model)}" title="${escapeHtml(m.model_label)} · ${fmtPct(pct)}"></div>`;
-  }).join("");
-  if (caption) caption.textContent = `Share of ${weightLabel()} · ${sorted[0].model_label} leads at ${fmtPct((weightOf(sorted[0]) / total) * 100, 0)}`;
+  bar.innerHTML = sorted
+    .map((m) => {
+      const pct = (weightOf(m) / total) * 100;
+      return `<div class="share-seg" style="width:${pct}%; background:${modelColor(m.model)}" title="${escapeHtml(m.model_label)} · ${fmtPct(pct)}"></div>`;
+    })
+    .join("");
+  if (caption)
+    caption.textContent = `Share of ${weightLabel()} · ${sorted[0].model_label} leads at ${fmtPct((weightOf(sorted[0]) / total) * 100, 0)}`;
   table.innerHTML = `
     <table class="usage-table">
       <thead><tr><th>Model</th><th class="num">Share</th><th class="num">Turns</th><th class="num">Sessions</th><th class="num">Tokens</th><th class="num">Output</th><th class="num">Est. cost</th></tr></thead>
       <tbody>
-        ${sorted.map((m) => `
+        ${sorted
+          .map(
+            (m) => `
           <tr>
             <td>${modelChip(m.model, m.model_label)}</td>
             <td class="num strong">${fmtPct((weightOf(m) / total) * 100)}</td>
@@ -390,7 +442,9 @@ function renderModelMix(models) {
             <td class="num">${fmtTokens(m.total_tokens)}</td>
             <td class="num">${fmtTokens(m.output_tokens)}</td>
             <td class="num">${fmtUSD(m.est_cost_usd)}</td>
-          </tr>`).join("")}
+          </tr>`,
+          )
+          .join("")}
       </tbody>
     </table>`;
 }
@@ -406,10 +460,30 @@ function renderCache(summary) {
   }
   const palette = tokens().models;
   const rows = [
-    { label: "Cache reads", value: summary.cache_read_tokens, color: palette.opus, hint: "Context replayed from cache (cheapest)" },
-    { label: "Cache writes", value: summary.cache_creation_tokens, color: palette.opusAlt, hint: `${fmtTokens(summary.cache_1h_tokens)} with 1h TTL · ${fmtTokens(summary.cache_5m_tokens)} with 5m TTL` },
-    { label: "Fresh input", value: summary.input_tokens, color: palette.sonnet, hint: "Uncached prompt tokens" },
-    { label: "Output", value: summary.output_tokens, color: palette.fable, hint: `${fmtTokens(summary.thinking_tokens)} thinking` },
+    {
+      label: "Cache reads",
+      value: summary.cache_read_tokens,
+      color: palette.opus,
+      hint: "Context replayed from cache (cheapest)",
+    },
+    {
+      label: "Cache writes",
+      value: summary.cache_creation_tokens,
+      color: palette.opusAlt,
+      hint: `${fmtTokens(summary.cache_1h_tokens)} with 1h TTL · ${fmtTokens(summary.cache_5m_tokens)} with 5m TTL`,
+    },
+    {
+      label: "Fresh input",
+      value: summary.input_tokens,
+      color: palette.sonnet,
+      hint: "Uncached prompt tokens",
+    },
+    {
+      label: "Output",
+      value: summary.output_tokens,
+      color: palette.fable,
+      hint: `${fmtTokens(summary.thinking_tokens)} thinking`,
+    },
   ];
   const total = rows.reduce((a, r) => a + (Number(r.value) || 0), 0) || 1;
   el.innerHTML = `
@@ -417,14 +491,18 @@ function renderCache(summary) {
       ${rows.map((r) => `<div class="share-seg" style="width:${(r.value / total) * 100}%; background:${r.color}" title="${escapeHtml(r.label)} · ${fmtPct((r.value / total) * 100)}"></div>`).join("")}
     </div>
     <div class="cache-rows">
-      ${rows.map((r) => `
+      ${rows
+        .map(
+          (r) => `
         <div class="cache-row">
           <span class="dot" style="background:${r.color}"></span>
           <span class="cache-label">${escapeHtml(r.label)}</span>
           <span class="cache-value">${fmtTokens(r.value)}</span>
           <span class="cache-pct">${fmtPct((r.value / total) * 100)}</span>
           <span class="cache-hint">${escapeHtml(r.hint)}</span>
-        </div>`).join("")}
+        </div>`,
+        )
+        .join("")}
     </div>
     <div class="cache-summary">
       Each turn resent on average <strong>${fmtTokens(summary.turns ? summary.total_input_tokens / summary.turns : 0)}</strong> tokens of context and produced <strong>${fmtTokens(summary.turns ? summary.output_tokens / summary.turns : 0)}</strong>.
@@ -465,11 +543,14 @@ function renderTimeline(rows, bucket) {
     const filled = [];
     const start = new Date(`${labels[0]}T00:00:00`);
     const end = new Date(`${labels[labels.length - 1]}T00:00:00`);
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) filled.push(getLocalDateString(d));
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1))
+      filled.push(getLocalDateString(d));
     labels = filled;
   }
 
-  const models = Array.from(modelsSeen.entries()).sort((a, b) => b[1] - a[1]).map(([m]) => m);
+  const models = Array.from(modelsSeen.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([m]) => m);
   if (!models.length) {
     if (caption) caption.textContent = `Nothing recorded for ${scopeLabel()}`;
     return;
@@ -504,7 +585,16 @@ function renderTimeline(rows, bucket) {
       maintainAspectRatio: false,
       animation: { duration: 250 },
       plugins: {
-        legend: { position: "bottom", labels: { color: t.ink2, boxWidth: 10, boxHeight: 10, padding: 14, font: { size: 10, family: t.fontMono } } },
+        legend: {
+          position: "bottom",
+          labels: {
+            color: t.ink2,
+            boxWidth: 10,
+            boxHeight: 10,
+            padding: 14,
+            font: { size: 10, family: t.fontMono },
+          },
+        },
         tooltip: {
           backgroundColor: t.surfaceRaised,
           titleColor: t.ink,
@@ -517,7 +607,8 @@ function renderTimeline(rows, bucket) {
           bodyFont: { family: t.fontMono, size: 11 },
           footerFont: { family: t.fontMono, size: 11 },
           callbacks: {
-            label: (ctx) => ` ${ctx.dataset.label}: ${isTokens ? fmtTokens(ctx.parsed.y) : fmtUSD(ctx.parsed.y)}`,
+            label: (ctx) =>
+              ` ${ctx.dataset.label}: ${isTokens ? fmtTokens(ctx.parsed.y) : fmtUSD(ctx.parsed.y)}`,
             footer: (items) => {
               const total = items.reduce((a, i) => a + (i.parsed.y || 0), 0);
               return `Total: ${isTokens ? fmtTokens(total) : fmtUSD(total)}`;
@@ -526,13 +617,27 @@ function renderTimeline(rows, bucket) {
         },
       },
       scales: {
-        x: { stacked: true, border: { color: t.rule }, grid: { display: false }, ticks: { color: t.ink3, font: { size: 10, family: t.fontMono }, maxRotation: 0, autoSkip: true } },
+        x: {
+          stacked: true,
+          border: { color: t.rule },
+          grid: { display: false },
+          ticks: {
+            color: t.ink3,
+            font: { size: 10, family: t.fontMono },
+            maxRotation: 0,
+            autoSkip: true,
+          },
+        },
         y: {
           stacked: true,
           beginAtZero: true,
           border: { color: t.rule },
           grid: { color: t.ruleFaint },
-          ticks: { color: t.ink3, font: { size: 10, family: t.fontMono }, callback: (v) => (isTokens ? fmtTokens(v) : fmtUSD(v)) },
+          ticks: {
+            color: t.ink3,
+            font: { size: 10, family: t.fontMono },
+            callback: (v) => (isTokens ? fmtTokens(v) : fmtUSD(v)),
+          },
         },
       },
     },
@@ -579,20 +684,31 @@ function renderHeatmap(cells) {
     if (caption) caption.textContent = "";
     return;
   }
-  if (caption && busiest) caption.textContent = `Busiest: ${days[busiest.weekday]} ${formatHourLabel(busiest.hour)} · by ${weightLabel()}`;
+  if (caption && busiest)
+    caption.textContent = `Busiest: ${days[busiest.weekday]} ${formatHourLabel(busiest.hour)} · by ${weightLabel()}`;
 
   // Monday-first display order.
   const order = [1, 2, 3, 4, 5, 6, 0];
   const heat = tokens().heatRgb;
-  const hourHeader = Array.from({ length: 24 }, (_, h) => `<div class="hm-hour">${h % 3 === 0 ? formatHourLabel(h).replace(" ", "") : ""}</div>`).join("");
-  const body = order.map((d) => `
+  const hourHeader = Array.from(
+    { length: 24 },
+    (_, h) =>
+      `<div class="hm-hour">${h % 3 === 0 ? formatHourLabel(h).replace(" ", "") : ""}</div>`,
+  ).join("");
+  const body = order
+    .map(
+      (d) => `
     <div class="hm-day">${days[d]}</div>
-    ${grid[d].map((v, h) => {
-      const t = v / max;
-      const a = v ? 0.12 + Math.sqrt(t) * 0.78 : 0;
-      const inRange = getSelectedDateString() ? h >= state.startHour && h <= state.endHour : true;
-      return `<div class="hm-cell ${inRange ? "" : "hm-cell-out"}" style="background: ${a ? `rgba(${heat[0]}, ${heat[1]}, ${heat[2]}, ${a.toFixed(3)})` : "transparent"}" title="${days[d]} ${formatHourLabel(h)} · ${fmtWeight(v)}"></div>`;
-    }).join("")}`).join("");
+    ${grid[d]
+      .map((v, h) => {
+        const t = v / max;
+        const a = v ? 0.12 + Math.sqrt(t) * 0.78 : 0;
+        const inRange = getSelectedDateString() ? h >= state.startHour && h <= state.endHour : true;
+        return `<div class="hm-cell ${inRange ? "" : "hm-cell-out"}" style="background: ${a ? `rgba(${heat[0]}, ${heat[1]}, ${heat[2]}, ${a.toFixed(3)})` : "transparent"}" title="${days[d]} ${formatHourLabel(h)} · ${fmtWeight(v)}"></div>`;
+      })
+      .join("")}`,
+    )
+    .join("");
   el.innerHTML = `<div class="hm-grid"><div class="hm-corner"></div>${hourHeader}${body}</div>`;
 }
 
@@ -610,7 +726,9 @@ function renderProjects(projects) {
     <table class="usage-table">
       <thead><tr><th>Project</th><th class="num">Sessions</th><th class="num">Turns</th><th class="num">Tokens</th><th class="num">Est. cost</th></tr></thead>
       <tbody>
-        ${projects.map((p) => `
+        ${projects
+          .map(
+            (p) => `
           <tr title="${p.directories > 1 ? `${p.directories} working directories (worktrees) collapsed into this project` : ""}">
             <td>
               <div class="proj-name">${escapeHtml(p.project_name)}${p.directories > 1 ? `<span class="proj-dirs">${p.directories} worktrees</span>` : ""}</div>
@@ -620,7 +738,9 @@ function renderProjects(projects) {
             <td class="num">${fmtInt(p.turns)}</td>
             <td class="num">${fmtTokens(p.total_tokens)}</td>
             <td class="num">${fmtUSD(p.est_cost_usd)}</td>
-          </tr>`).join("")}
+          </tr>`,
+          )
+          .join("")}
       </tbody>
     </table>`;
 }
@@ -635,7 +755,16 @@ const pluginSlot = new Map();
 
 function pluginColor(name) {
   const palette = tokens().models;
-  const wheel = [palette.opus, palette.sonnet, palette.fable, palette.haiku, palette.opusAlt, palette.sonnetAlt, palette.fableAlt, ...palette.spare];
+  const wheel = [
+    palette.opus,
+    palette.sonnet,
+    palette.fable,
+    palette.haiku,
+    palette.opusAlt,
+    palette.sonnetAlt,
+    palette.fableAlt,
+    ...palette.spare,
+  ];
   if (!pluginSlot.has(name)) pluginSlot.set(name, pluginSlot.size % wheel.length);
   return wheel[pluginSlot.get(name)];
 }
@@ -676,15 +805,32 @@ function renderSkills(data) {
   const perRun = totals.invocations ? weightOf(attributed) / totals.invocations : 0;
 
   if (caption) {
-    caption.textContent = `${fmtInt(totals.invocations)} invocations of ${fmtInt(totals.distinct_skills)} skills` +
+    caption.textContent =
+      `${fmtInt(totals.invocations)} invocations of ${fmtInt(totals.distinct_skills)} skills` +
       (totals.errors ? ` · ${fmtInt(totals.errors)} failed to load` : "");
   }
   if (statsEl) {
     statsEl.innerHTML = [
-      statTile("Invocations", fmtInt(totals.invocations), `${fmtInt(totals.distinct_skills)} skills from ${fmtInt(totals.distinct_plugins)} plugins`),
-      statTile("Sessions with a skill", fmtInt(totals.sessions_with_skills), `of ${fmtInt(totals.sessions_total)} sessions in range`),
-      statTile("Context injected", fmtTokens(totals.payload_tokens), `≈${fmtTokens(totals.invocations ? totals.payload_tokens / totals.invocations : 0)} per load, estimated`),
-      statTile("Attributed work", fmtWeight(weightOf(attributed)), `${fmtPct(share, 0)} of ${weightLabel()} · ${fmtWeight(perRun)} per invocation`),
+      statTile(
+        "Invocations",
+        fmtInt(totals.invocations),
+        `${fmtInt(totals.distinct_skills)} skills from ${fmtInt(totals.distinct_plugins)} plugins`,
+      ),
+      statTile(
+        "Sessions with a skill",
+        fmtInt(totals.sessions_with_skills),
+        `of ${fmtInt(totals.sessions_total)} sessions in range`,
+      ),
+      statTile(
+        "Context injected",
+        fmtTokens(totals.payload_tokens),
+        `≈${fmtTokens(totals.invocations ? totals.payload_tokens / totals.invocations : 0)} per load, estimated`,
+      ),
+      statTile(
+        "Attributed work",
+        fmtWeight(weightOf(attributed)),
+        `${fmtPct(share, 0)} of ${weightLabel()} · ${fmtWeight(perRun)} per invocation`,
+      ),
     ].join("");
   }
 
@@ -698,13 +844,16 @@ function renderSkills(data) {
         </tr>
       </thead>
       <tbody>
-        ${skills.map((s) => {
-          const w = weightOf(skillWeightRow(s));
-          const version = s.latest_version
-            ? ` <span class="skill-version">v${escapeHtml(s.latest_version)}${s.version_count > 1 ? ` <small>+${s.version_count - 1}</small>` : ""}</span>`
-            : "";
-          const failed = s.errors ? `<span class="skill-fail" title="${s.errors} invocation(s) failed to load">${s.errors} failed</span>` : "";
-          return `
+        ${skills
+          .map((s) => {
+            const w = weightOf(skillWeightRow(s));
+            const version = s.latest_version
+              ? ` <span class="skill-version">v${escapeHtml(s.latest_version)}${s.version_count > 1 ? ` <small>+${s.version_count - 1}</small>` : ""}</span>`
+              : "";
+            const failed = s.errors
+              ? `<span class="skill-fail" title="${s.errors} invocation(s) failed to load">${s.errors} failed</span>`
+              : "";
+            return `
             <tr title="${escapeHtml(s.skill)}\nlast used ${escapeHtml(fmtDateTime(s.last_used))}">
               <td>
                 <div class="skill-name">${skillChip(s)}${failed}</div>
@@ -719,7 +868,8 @@ function renderSkills(data) {
               <td class="num">${fmtUSD(s.attributed_cost_usd)}</td>
               <td class="num">${fmtWeight(s.invocations ? w / s.invocations : 0)}</td>
             </tr>`;
-        }).join("")}
+          })
+          .join("")}
       </tbody>
     </table>
     <p class="table-note">
@@ -753,15 +903,18 @@ function renderPlugins(data) {
     <table class="usage-table">
       <thead><tr><th>Plugin</th><th class="num">Skills</th><th class="num">Runs</th><th class="num">MCP calls</th><th class="num">Tokens</th><th class="num">Est. cost</th></tr></thead>
       <tbody>
-        ${plugins.map((p) => {
-          const w = weightOf(skillWeightRow(p));
-          const servers = p.mcp_servers.map((m) => `${m.server} ×${fmtInt(m.calls)}`).join(", ");
-          const meta = [
-            p.latest_version ? `v${p.latest_version}` : null,
-            p.marketplace,
-            servers || null,
-          ].filter(Boolean).join(" · ");
-          return `
+        ${plugins
+          .map((p) => {
+            const w = weightOf(skillWeightRow(p));
+            const servers = p.mcp_servers.map((m) => `${m.server} ×${fmtInt(m.calls)}`).join(", ");
+            const meta = [
+              p.latest_version ? `v${p.latest_version}` : null,
+              p.marketplace,
+              servers || null,
+            ]
+              .filter(Boolean)
+              .join(" · ");
+            return `
             <tr>
               <td>
                 <div class="skill-name">
@@ -776,7 +929,8 @@ function renderPlugins(data) {
               <td class="num">${fmtTokens(p.attributed_tokens)}</td>
               <td class="num">${fmtUSD(p.attributed_cost_usd)}</td>
             </tr>`;
-        }).join("")}
+          })
+          .join("")}
       </tbody>
     </table>`;
 }
@@ -812,22 +966,30 @@ function renderTools(data) {
       ${kinds.map((k) => `<div class="share-seg" style="width:${(k.calls / total) * 100}%; background:${palette[TOOL_KIND_SLOT[k.tool_kind]] || palette.spare[0]}" title="${escapeHtml(k.tool_kind)} · ${fmtInt(k.calls)} calls"></div>`).join("")}
     </div>
     <div class="cache-rows">
-      ${kinds.map((k) => `
+      ${kinds
+        .map(
+          (k) => `
         <div class="cache-row">
           <span class="dot" style="background:${palette[TOOL_KIND_SLOT[k.tool_kind]] || palette.spare[0]}"></span>
           <span class="cache-label">${escapeHtml(k.tool_kind)}</span>
           <span class="cache-value">${fmtInt(k.calls)}</span>
           <span class="cache-pct">${fmtPct((k.calls / total) * 100)}</span>
           <span class="cache-hint">${escapeHtml(`${k.tools} distinct · ${TOOL_KIND_HINT[k.tool_kind] || ""}`)}</span>
-        </div>`).join("")}
+        </div>`,
+        )
+        .join("")}
     </div>
     <div class="tool-list">
-      ${tools.map((t) => `
+      ${tools
+        .map(
+          (t) => `
         <div class="tool-row" title="${escapeHtml(t.tool_name)}${t.server ? `\nserver: ${escapeHtml(t.server)}` : ""}">
           <span class="tool-name">${escapeHtml(toolLabel(t))}</span>
           <span class="tool-bar"><i style="width:${(t.calls / max) * 100}%; background:${palette[TOOL_KIND_SLOT[t.tool_kind]] || palette.spare[0]}"></i></span>
           <span class="tool-count">${fmtInt(t.calls)}</span>
-        </div>`).join("")}
+        </div>`,
+        )
+        .join("")}
     </div>`;
 }
 
@@ -849,10 +1011,15 @@ function renderSessions(sessions) {
     return;
   }
   const helpers = sessions.filter(isHelperSession).length;
-  const shown = usageState.hideHelperSessions ? sessions.filter((s) => !isHelperSession(s)) : sessions;
+  const shown = usageState.hideHelperSessions
+    ? sessions.filter((s) => !isHelperSession(s))
+    : sessions;
   if (caption) {
-    caption.innerHTML = `${shown.length} of the ${sessions.length} most recent sessions in ${escapeHtml(scopeLabel())}` +
-      (helpers ? ` · <label class="inline-toggle"><input type="checkbox" ${usageState.hideHelperSessions ? "checked" : ""} onchange="toggleHelperSessions(this.checked)"> hide ${helpers} one-turn helper session${helpers === 1 ? "" : "s"}</label>` : "");
+    caption.innerHTML =
+      `${shown.length} of the ${sessions.length} most recent sessions in ${escapeHtml(scopeLabel())}` +
+      (helpers
+        ? ` · <label class="inline-toggle"><input type="checkbox" ${usageState.hideHelperSessions ? "checked" : ""} onchange="toggleHelperSessions(this.checked)"> hide ${helpers} one-turn helper session${helpers === 1 ? "" : "s"}</label>`
+        : "");
   }
   const dateStr = getSelectedDateString();
   if (!shown.length) {
@@ -868,14 +1035,23 @@ function renderSessions(sessions) {
         </tr>
       </thead>
       <tbody>
-        ${shown.map((s) => {
-          const title = s.title || s.first_prompt || s.session_id.slice(0, 8);
-          const meta = [s.project_name, s.worktree, s.git_branch].filter(Boolean).join(" · ");
-          const modelsHtml = (s.models || []).slice(0, 3).map((m) => modelChip(m.model, `${m.model_label} ×${m.turns}`)).join("");
-          const skillsHtml = (s.skills || []).slice(0, 3)
-            .map((k) => skillChip(k, k.invocations > 1 ? ` ×${k.invocations}` : ""))
-            .join("") + ((s.skills || []).length > 3 ? `<span class="skill-more">+${s.skills.length - 3}</span>` : "");
-          return `
+        ${shown
+          .map((s) => {
+            const title = s.title || s.first_prompt || s.session_id.slice(0, 8);
+            const meta = [s.project_name, s.worktree, s.git_branch].filter(Boolean).join(" · ");
+            const modelsHtml = (s.models || [])
+              .slice(0, 3)
+              .map((m) => modelChip(m.model, `${m.model_label} ×${m.turns}`))
+              .join("");
+            const skillsHtml =
+              (s.skills || [])
+                .slice(0, 3)
+                .map((k) => skillChip(k, k.invocations > 1 ? ` ×${k.invocations}` : ""))
+                .join("") +
+              ((s.skills || []).length > 3
+                ? `<span class="skill-more">+${s.skills.length - 3}</span>`
+                : "");
+            return `
             <tr title="${escapeHtml(s.first_prompt || "")}\n${escapeHtml(s.session_id)}">
               <td class="sess-cell">
                 <div class="sess-title">${escapeHtml(title)}</div>
@@ -889,10 +1065,11 @@ function renderSessions(sessions) {
               <td class="num">${fmtTokens(s.total_tokens)}</td>
               <td class="num">${fmtTokens(s.output_tokens)}</td>
               <td class="models-cell">${modelsHtml}</td>
-              <td class="models-cell">${skillsHtml || "<span class=\"skill-none\">–</span>"}</td>
+              <td class="models-cell">${skillsHtml || '<span class="skill-none">–</span>'}</td>
               <td class="num">${fmtUSD(s.est_cost_usd)}</td>
             </tr>`;
-        }).join("")}
+          })
+          .join("")}
       </tbody>
     </table>`;
 }

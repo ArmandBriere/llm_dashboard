@@ -1,189 +1,209 @@
-# LLM Quota Tracker (Claude Code)
+# LLM Quota Tracker
 
-A lightweight, local web application to track, store, and visualize LLM quota utilization across multiple Claude Code subscriptions in real-time.
+A small local dashboard that tracks how much of your **Claude Code** quota you
+are using, across every Claude Code profile signed in on your Mac, and keeps
+the history so you can see when a window resets and what consumed it.
 
-It integrates **directly and natively** with macOS Keychain credentials and Anthropic's OAuth APIs (`/api/oauth/profile` and `/api/oauth/usage`) with **zero dependency on `claude-swap`**.
+It reads the same credentials Claude Code stores in the macOS keychain, asks
+Anthropic's usage endpoint for the live utilisation, and indexes the transcripts
+Claude Code writes locally to break usage down by model, session, project, tool
+and skill. Nothing leaves your machine except those API calls.
 
----
+Python (FastAPI + SQLite) backend, static HTML/JS frontend, no build step.
 
-## Claude Code Usage Insights
+## What you get
 
-Alongside the live quota the dashboard analyses your local Claude Code transcripts
-(`~/.claude*/projects/**/*.jsonl`). Each assistant turn there records the model and
-the exact token usage the API returned, which the OAuth usage endpoint does not
-expose. The collector indexes new lines incrementally every poll (a cold scan of
-~1,250 transcripts takes about 10 s) into `usage_turns`, `usage_tool_calls` and
-`usage_skill_invocations`, and the **usage** and **surfaces** views show:
+- **Live quota** for every account: 5-hour window, 7-day window, model-scoped
+  limits and extra-usage spend, pinned to the sidebar on every view.
+- **Timeline** of utilisation with markers where a window reset or hit 100%,
+  filterable by account, day and hour of day.
+- **Usage insights** from your local transcripts: tokens and estimated cost per
+  model, cache hit rate, activity heatmap, per-project and per-session totals,
+  and which skills, plugins and tools drove the work.
+- **Eleven views** behind a collapsible sidebar, each with its own URL, and
+  four dark themes.
+- Runs as a **24/7 background service** on macOS so the history has no gaps
+  while the Mac is awake.
 
-- **Stat tiles**: sessions, turns, tokens, output/thinking share, cache hit rate, tool calls, estimated API-equivalent cost per account.
-- **5-hour windows**: every reset window the poller observed, with each model's share of the window's peak utilisation (share of estimated cost or raw tokens × peak %).
-- **Model mix**, **cache & output** breakdown, **activity over time** (stacked by model), a **weekday × hour heatmap** and **projects**.
-- **Skills**: every `Skill` invocation, which plugin and plugin version it came
-  from, how many invocations failed, how much instruction text it injects, and
-  the work it then drove.
-- **Plugins**: the same rolled up per plugin, plus the calls made to the MCP
-  servers that plugin ships.
-- **Tools**: the tool-call leaderboard split into builtin / MCP / skill / subagent.
-- **Sessions**: title, project, branch, duration, turns, tools, tokens, models,
-  the skills that session invoked, and cost.
+## Requirements
 
-### How skills are measured
+| Tool                                                     | Why                                                                   | Install                        |
+| -------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------ |
+| macOS                                                    | Credentials are read from the login keychain via `/usr/bin/security`. | –                              |
+| [Claude Code](https://claude.com/claude-code), signed in | It is what we are measuring. Several profiles are fine.               | –                              |
+| [uv](https://docs.astral.sh/uv/)                         | Creates the Python environment (Python 3.11+ is fetched if needed).   | `brew install uv`              |
+| git                                                      | To clone and to deploy.                                               | ships with Xcode CLT           |
+| [bun](https://bun.sh) _(development only)_               | Runs prettier for the frontend and docs.                              | `brew install oven-sh/bun/bun` |
+| shellcheck _(development only)_                          | Lints the shell scripts.                                              | `brew install shellcheck`      |
 
-A skill has no token usage of its own, so three different numbers are reported
-and they mean different things:
-
-- **Runs** counts `Skill` tool calls. A run that comes back `Unknown skill`
-  is counted and flagged, but attributed no work.
-- **Context** is the instruction text the skill injects each time it loads,
-  estimated at four characters per token. The transcript records no token count
-  for it, and it is the one cost a skill imposes directly. (The bundled
-  `claude-api` skill injects ~142k tokens; most plugin skills inject 1k–7k.)
-- **Turns / tokens / cost** are the work done *after* the skill loaded. Each
-  turn counts for the skill most recently loaded in its own transcript, so the
-  rows partition the window instead of double-counting sessions that load
-  several skills. The walk follows the transcript rather than the session
-  because a subagent writes its own file under the parent's session id.
-
-Plugin provenance (marketplace, plugin, version) is read from the directory the
-skill was loaded from, which is the only place the transcript records it.
-
-Account attribution uses the Claude home directory: `~/.claude` maps to the default
-keychain entry and any other `~/.claude_*` directory maps to the keychain entry whose
-suffix is `sha256(path)[:8]`, the same rule Claude Code uses. Cost estimates come from
-`backend/pricing.py` and are relative weights, not what a subscription bills.
-
-## Features
-
-- **Multi-Subscription Support**: Automatically discovers all local Claude Code subscriptions (`Vooban`, `VoobanLabs`, etc.) directly from macOS Keychain and local configurations.
-- **Direct Anthropic API Integration**: Communicates directly with Anthropic's OAuth endpoints to fetch live utilization and token expiration.
-- **5-Minute Periodic Polling**: Background collector runs every 5 minutes and persists quota snapshots to a lightweight SQLite database (`llm_dashboard.db`).
-- **Smart Quota Reset & Exhaustion Detection**: Automatically detects when a 5-hour quota refreshes (a large utilization drop, or a small drop paired with a new reset deadline), a 7-day weekly reset occurs, or quota hits 100% capacity, logging distinct events.
-- **Routed Sidenav**: Eleven views behind a collapsible sidebar, one visible at a
-  time, each on its own `#/route` so a view is bookmarkable and survives a reload.
-  Only the visible view fetches, so the 30-second background refresh asks for one
-  or two endpoints rather than all of them. The live quota stays pinned to the
-  foot of the sidebar wherever you navigate.
-- **Interactive Timeline Dashboard**:
-  - One filter bar for every view; controls a view ignores are dimmed.
-  - Toggle one or several accounts with colour-coded chips (All, Vooban, VoobanLabs). Each account keeps one hue everywhere: cards, chart lines, reset markers, and the event log.
-  - Filter by date (Today, All Time, or specific date).
-  - Filter by hour of day with presets (Work day, Morning, Afternoon, Evening, 24h) or a dual-handle slider.
-  - Toggle between **Usage % (0% -> 100%)** and **Remaining Quota % (100% -> 0%)**.
-  - Visual event markers on the timeline chart, one per account and labelled with the account name.
-  - Manual "Poll Now" trigger with live updating status.
-- **Extensible Architecture**: Abstract `BaseProvider` interface makes adding OpenAI, Cursor, or Google Gemini trivial in the future.
-
----
-
-## Discovered Subscriptions
-
-| Subscription | Account Email | 5-Hour Session Quota | 7-Day Weekly Quota | Extra Usage Spend |
-|---|---|:---:|:---:|:---:|
-| **Vooban** | `armand.briere@vooban.com` | 100.0% | 32.0% | $100.10 / $100.00 CAD (100%) |
-| **VoobanLabs** | `armand.briere@voobanlabs.com` | 100.0% | 28.0% | $0.00 / USD (Disabled) |
-
----
-
-## Quick Start
-
-Run the launcher script:
+## Install and run
 
 ```bash
-./start.sh          # or: make run
+git clone git@github.com:ArmandBriere/llm_dashboard.git
+cd llm_dashboard
+make run
 ```
 
-Or start manually:
+`make run` creates `.venv`, installs the dependencies and starts the server on
+<http://127.0.0.1:8000>, opening it in your browser. The first collection pass
+runs immediately; the transcript index is built in the background and takes a
+few seconds per thousand transcripts.
+
+The first time it runs, macOS may ask whether `security` may read the
+"Claude Code-credentials" keychain item. Choose **Always Allow**.
+
+To run it without opening a browser, or on another port:
 
 ```bash
-# 1. Create and activate venv
-uv venv .venv
-uv pip install -r requirements.txt --python .venv/bin/python
-
-# 2. Run the server
-.venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+./start.sh --no-open
+PORT=9000 ./start.sh
 ```
 
-Open your browser at [http://127.0.0.1:8000](http://127.0.0.1:8000).
+### Run it 24/7
 
----
-
-## Running 24/7 (macOS LaunchAgent)
-
-To keep the collector polling continuously, install it as a user LaunchAgent:
+Polling only happens while the server runs, so install it as a user
+LaunchAgent to start at login and restart on crash:
 
 ```bash
-make install     # render the plist, load it, start now
+make install     # render the plist, load the agent, start now
 make status      # state / pid / last exit code
 make logs        # tail stdout + stderr
 make uninstall   # stop and remove
 ```
 
-Once it is installed, `make` on its own is the deploy: it fast-forwards the
-runtime checkout to `origin/main`, syncs dependencies, restarts the service and
-verifies it came back. `make help` lists every target.
+Once installed, `make deploy` pulls `origin/main` into the runtime checkout,
+syncs dependencies, restarts the service and verifies it came back. The
+runbook in [docs/running-24-7.md](docs/running-24-7.md) covers configuration,
+logs, sleep and troubleshooting; [docs/deploying.md](docs/deploying.md) covers
+updates and rollback.
 
-It starts at every login and restarts within ~10s if it crashes. Logs go to
-`~/Library/Logs/llm-dashboard/`.
+## Configuration
 
-It must be a **user** LaunchAgent, not a LaunchDaemon or a container: the
-provider reads your login keychain via `/usr/bin/security`, which only works
-inside your logged-in GUI session.
+Everything is an environment variable. For the foreground run, export it or
+prefix the command; for the service, set it in the `EnvironmentVariables` dict
+of `com.armandbriere.llm-dashboard.plist.template` and run `make install`.
 
-The main caveat is sleep: a sleeping Mac leaves gaps in the timeline.
+| Variable                     | Default                        | Purpose                                                                                                                       |
+| ---------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `LLM_DASHBOARD_POLL_SECONDS` | `300`                          | Seconds between two quota polls. Minimum `30`; lower values are raised to the floor, invalid values fall back to the default. |
+| `LLM_DASHBOARD_DB_PATH`      | `<repo>/llm_dashboard.db`      | Where the SQLite database lives.                                                                                              |
+| `HOST`                       | `127.0.0.1`                    | Listen address. Keep it on loopback: there is no authentication.                                                              |
+| `PORT`                       | `8000`                         | Listen port.                                                                                                                  |
+| `LLM_DASHBOARD_LOG_DIR`      | `~/Library/Logs/llm-dashboard` | Service only. Where `run-service.sh` writes and rotates logs.                                                                 |
+| `LLM_DASHBOARD_CAFFEINATE`   | `0`                            | Service only. `1` wraps the server in `caffeinate -is` so the Mac does not idle-sleep.                                        |
 
-**See [docs/running-24-7.md](docs/running-24-7.md)** for the full runbook:
-configuration, log rotation, sleep mitigations, and troubleshooting.
+Example, polling every two minutes in the foreground:
 
-**See [docs/deploying.md](docs/deploying.md)** for how merged code reaches the
-running service: which checkout launchd actually serves, what needs a restart,
-how to verify, and how to roll back without destroying the quota history.
+```bash
+LLM_DASHBOARD_POLL_SECONDS=120 ./start.sh
+```
 
----
+The browser refreshes what is on screen every 30 seconds regardless of the
+poll interval; it only shows data the collector has already stored.
 
-## API Endpoints
+## How it works
 
-- `GET /api/subscriptions`: List all discovered subscriptions with their latest live quota snapshot.
-- `GET /api/snapshots?subscription_ids=1,2&date=2026-09-08&start_hour=7&end_hour=21`: Query historical snapshots filtered by account, date, and hour range.
-- `GET /api/events?subscription_ids=1&limit=50`: Get detected reset and refresh events.
-- `POST /api/refresh`: Trigger an immediate live collection pass across all accounts.
-- `GET /api/usage/skills`: Per-skill and per-plugin invocations, injected context and attributed tokens.
-- `GET /api/usage/tools`: Tool-call leaderboard with totals per tool kind and MCP server.
-- `GET /api/usage/skill-timeline?bucket=day`: Skill invocations per hour or day.
-- `GET /api/status`: Check collector health and next scheduled poll.
+```mermaid
+flowchart LR
+    KC[macOS keychain<br/>Claude Code-credentials*] -->|OAuth tokens| P[ClaudeCodeProvider]
+    P -->|/api/oauth/profile<br/>/api/oauth/usage| API[(Anthropic API)]
+    API --> P
+    P --> C[QuotaCollector<br/>every POLL_SECONDS]
+    T[~/.claude*/projects/**/*.jsonl<br/>Claude Code transcripts] --> S[Transcript scanner]
+    C --> S
+    C --> DB[(SQLite<br/>llm_dashboard.db)]
+    S --> DB
+    DB --> F[FastAPI /api/*]
+    F --> UI[Static frontend<br/>Chart.js]
+```
 
----
+**1. Discover accounts.** Claude Code keeps one _home_ per profile: `~/.claude`
+by default, or `~/.claude_<name>` when `CLAUDE_CONFIG_DIR` is set. Each home has
+a keychain entry named `Claude Code-credentials` (default home) or
+`Claude Code-credentials-<sha256(path)[:8]>`, which is the rule Claude Code
+itself uses. The provider lists those entries, reads the OAuth token from each,
+and refreshes it through Anthropic's token endpoint when it is about to expire,
+writing the new token back so Claude Code stays signed in too.
 
-## Project Structure
+**2. Poll the quota.** Every `LLM_DASHBOARD_POLL_SECONDS` (default 5 minutes)
+the collector calls `/api/oauth/usage` for each account and stores a snapshot:
+5-hour and 7-day utilisation, their reset times, any model-scoped weekly limit,
+and extra-usage spend. The endpoint rate-limits readily; on a 429 the provider
+falls back to the reading Claude Code cached in `.claude.json`, marks the
+snapshot as _stale_, and the collector retries after 60 seconds instead of a
+full interval. A cached reading whose window has already reset is discarded
+rather than shown as current.
+
+**3. Detect events.** Comparing each new snapshot with the previous one yields
+three kinds of event: a 5-hour reset (a large drop, or a small drop with a new
+reset deadline), a 7-day reset, and exhaustion (100%). They become the markers
+on the timeline and the rows of the reset log.
+
+**4. Index transcripts.** Each collection pass also scans
+`~/.claude*/projects/**/*.jsonl`. Every assistant turn in those files records
+the model and the exact token counts the API returned, which the usage endpoint
+never exposes. The scanner remembers a byte offset per file and only reads new
+lines, so a pass after the first one is cheap. Turns, tool calls and skill
+invocations land in their own tables, attributed to an account through the
+home directory they came from. See
+[docs/usage-insights.md](docs/usage-insights.md) for what the derived numbers
+mean and how cost is estimated.
+
+**5. Serve.** FastAPI exposes everything under `/api/*`
+([docs/api.md](docs/api.md)) and serves `frontend/` as static files with
+no-cache headers. The frontend is plain JavaScript with Chart.js: one hash
+route per view, one filter bar shared by all views, and only the visible view
+fetches. It refreshes every 30 seconds and offers a **Poll now** button that
+triggers a collection pass on demand.
+
+## Development
+
+```bash
+make setup     # uv sync + bun install
+make dev       # auto-reloading server on :8001, next to the service on :8000
+make test      # pytest
+make lint      # ruff, prettier --check, shellcheck
+make format    # apply ruff and prettier
+make check     # lint + test, what CI runs
+```
+
+Tests run against temporary databases and fake Claude homes, so they pass on a
+machine with no keychain and no transcripts. CI runs `make check` on every push
+and pull request.
+
+Coding agents: read [AGENTS.md](AGENTS.md) first.
+
+### Project layout
 
 ```
-llm_dashboard/
-├── backend/
-│   ├── database.py         # SQLite schema, snapshot logger, reset event detector
-│   ├── collector.py        # 5-minute background polling loop
-│   ├── usage.py            # Transcript scanner and token/session aggregates
-│   ├── skills.py           # Skill, plugin and tool extraction and attribution
-│   ├── pricing.py          # Model price table for the cost estimate
-│   ├── main.py             # FastAPI application and API routes
-│   └── providers/
-│       ├── base.py         # Abstract BaseProvider interface
-│       └── claude_code.py  # Native Claude Code Keychain & Anthropic OAuth client
-├── frontend/
-│   ├── index.html          # Web dashboard layout
-│   ├── style.css           # "Console" design system: theme tokens and layout
-│   ├── theme.js            # Theme registry, picker, and token reader for the charts
-│   ├── app.js              # Chart.js timeline, quota gauges, filters, fetch cache
-│   ├── usage.js            # Claude Code usage insights parsed from local transcripts
-│   └── nav.js              # View registry, generated sidenav, and the hash router
-├── tests/
-│   ├── test_database.py    # Unit tests for database & event logic
-│   ├── test_usage.py       # Transcript scanner and aggregate tests
-│   ├── test_skills.py      # Skill/plugin extraction and attribution tests
-│   └── test_api.py         # Integration tests for FastAPI endpoints
-├── requirements.txt
-├── Makefile                # `make` deploys to the running service; `make help`
-├── start.sh                # Quick launch script (foreground, opens browser)
-├── run-service.sh          # Service-mode launcher used by launchd
-├── service.sh              # install / uninstall / restart / status / logs
-├── com.armandbriere.llm-dashboard.plist.template
-└── README.md
+backend/
+  main.py           FastAPI app and every /api route
+  collector.py      polling loop, retry on cached readings
+  config.py         LLM_DASHBOARD_* environment variables
+  database.py       SQLite schema, snapshots, reset/exhaustion detection
+  claude_home.py    Claude Code home dirs -> keychain service names
+  providers/        BaseProvider and the Claude Code provider
+  usage.py          transcript scanner and usage aggregates
+  skills.py         skill / plugin / tool extraction and attribution
+  pricing.py        model price table for the cost estimate
+frontend/
+  index.html        layout; style.css theme tokens; theme.js theme picker
+  app.js            quota views and charts; usage.js insight views; nav.js router
+tests/              pytest suite
+docs/               API reference, usage-insights semantics, service runbooks
+Makefile            make help
+start.sh            foreground launcher; run-service.sh: launchd launcher
+service.sh          install / uninstall / restart / status / logs
 ```
+
+## Limitations
+
+- **macOS only.** Credentials come from the login keychain, so the service must
+  run inside your logged-in GUI session (a user LaunchAgent, not a daemon or a
+  container).
+- **A sleeping Mac stops polling.** The history will have gaps; see the sleep
+  section of the runbook for mitigations.
+- **Cost is an estimate.** Subscriptions are flat-rate. The dollar figures apply
+  Anthropic's public API prices to your token counts to weight usage, not to
+  tell you what you paid.
+- **Claude Code only, for now.** `BaseProvider` is the seam for other tools.

@@ -18,13 +18,13 @@ read Claude Code credentials (`backend/providers/claude_code.py`). That reaches
 the **login keychain**, which is only unlocked and reachable from inside your
 logged-in GUI session. Everything follows from that constraint:
 
-| Option | Verdict | Reason |
-|---|---|---|
-| **User LaunchAgent** | ✅ Chosen | Runs as you, in the Aqua session. Keychain works. Native to macOS, no extra runtime. |
-| LaunchDaemon | ❌ | Runs as root before login, against the System keychain. `find-generic-password` finds nothing. |
-| Docker / container | ❌ | No macOS keychain, no `/usr/bin/security`. Credentials would have to be exported and kept in sync by hand. |
-| `nohup` / `screen` / `tmux` | ❌ | Dies with the terminal session or at logout. No restart-on-crash, no start-at-login. |
-| Remote host (VM, cloud) | ⚠️ | Never sleeps, but has no access to this Mac's keychain. Would need a different credential source entirely. |
+| Option                      | Verdict   | Reason                                                                                                     |
+| --------------------------- | --------- | ---------------------------------------------------------------------------------------------------------- |
+| **User LaunchAgent**        | ✅ Chosen | Runs as you, in the Aqua session. Keychain works. Native to macOS, no extra runtime.                       |
+| LaunchDaemon                | ❌        | Runs as root before login, against the System keychain. `find-generic-password` finds nothing.             |
+| Docker / container          | ❌        | No macOS keychain, no `/usr/bin/security`. Credentials would have to be exported and kept in sync by hand. |
+| `nohup` / `screen` / `tmux` | ❌        | Dies with the terminal session or at logout. No restart-on-crash, no start-at-login.                       |
+| Remote host (VM, cloud)     | ⚠️        | Never sleeps, but has no access to this Mac's keychain. Would need a different credential source entirely. |
 
 The plist pins this with `LimitLoadToSessionType = Aqua`, so the agent only ever
 loads in a GUI login session.
@@ -33,12 +33,12 @@ loads in a GUI login session.
 
 ## Files
 
-| File | Role |
-|---|---|
-| `Makefile` | Deploy entrypoint. `make` = sync + deps + restart + verify; wraps `service.sh` for day-to-day commands. |
-| `service.sh` | Management CLI: `install` / `uninstall` / `restart` / `status` / `logs`. |
-| `run-service.sh` | What launchd actually executes. Service-mode launcher: no browser, no TTY, bootstraps the venv, rotates logs. |
-| `com.armandbriere.llm-dashboard.plist.template` | Source of truth for the agent. `service.sh install` renders `__APP_DIR__` / `__HOME__` into the real plist. |
+| File                                            | Role                                                                                                          |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `Makefile`                                      | Deploy entrypoint. `make` = sync + deps + restart + verify; wraps `service.sh` for day-to-day commands.       |
+| `service.sh`                                    | Management CLI: `install` / `uninstall` / `restart` / `status` / `logs`.                                      |
+| `run-service.sh`                                | What launchd actually executes. Service-mode launcher: no browser, no TTY, bootstraps the venv, rotates logs. |
+| `com.armandbriere.llm-dashboard.plist.template` | Source of truth for the agent. `service.sh install` renders `__APP_DIR__` / `__HOME__` into the real plist.   |
 
 The rendered plist under `~/Library/LaunchAgents/` is **generated**. Edit the
 template and re-run `install`, never the rendered copy, or your change is lost on
@@ -113,13 +113,14 @@ rollback — see [deploying.md](deploying.md).
 Edit the `EnvironmentVariables` dict in
 `com.armandbriere.llm-dashboard.plist.template`, then re-run `./service.sh install`.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `HOST` | `127.0.0.1` | Listen address. Loopback only by default. |
-| `PORT` | `8000` | Listen port. |
-| `LLM_DASHBOARD_LOG_DIR` | `~/Library/Logs/llm-dashboard` | Where `run-service.sh` writes and rotates logs. |
-| `LLM_DASHBOARD_CAFFEINATE` | `0` | `1` wraps uvicorn in `caffeinate -is` to block idle sleep. |
-| `LLM_DASHBOARD_DB_PATH` | `<repo>/llm_dashboard.db` | Read by `backend/database.py`. Add it to the plist to relocate the database. |
+| Variable                     | Default                        | Purpose                                                                      |
+| ---------------------------- | ------------------------------ | ---------------------------------------------------------------------------- |
+| `HOST`                       | `127.0.0.1`                    | Listen address. Loopback only by default.                                    |
+| `PORT`                       | `8000`                         | Listen port.                                                                 |
+| `LLM_DASHBOARD_POLL_SECONDS` | `300`                          | Seconds between two quota polls. Minimum 30; see `backend/config.py`.        |
+| `LLM_DASHBOARD_LOG_DIR`      | `~/Library/Logs/llm-dashboard` | Where `run-service.sh` writes and rotates logs.                              |
+| `LLM_DASHBOARD_CAFFEINATE`   | `0`                            | `1` wraps uvicorn in `caffeinate -is` to block idle sleep.                   |
+| `LLM_DASHBOARD_DB_PATH`      | `<repo>/llm_dashboard.db`      | Read by `backend/database.py`. Add it to the plist to relocate the database. |
 
 `StandardOutPath` / `StandardErrorPath` are separate keys in the plist and are
 **not** driven by `LLM_DASHBOARD_LOG_DIR`. If you change the log directory,
@@ -158,7 +159,7 @@ simply never taken.
 Options, ranked by how well they hold up:
 
 1. **Keep it plugged in**, and set System Settings → Battery → Options →
-   *Prevent automatic sleeping on power adapter when the display is off*.
+   _Prevent automatic sleeping on power adapter when the display is off_.
    Check the current state with `pmset -g | grep '^ sleep'` (`0` means never).
 2. **`LLM_DASHBOARD_CAFFEINATE=1`**: holds a power assertion for exactly as long
    as the service runs. Same effect, scoped to this app rather than system-wide.
@@ -185,7 +186,7 @@ The agent was never bootstrapped, or you are in a non-GUI session (SSH).
 
 **Service flaps: `last exit code` is non-zero and the PID keeps changing**
 Read `~/Library/Logs/llm-dashboard/stderr.log`. Most common causes: port 8000
-already taken, or a missing dependency in `.venv`. Check the port with:
+already taken, or a missing dependency in `.venv` (`make deps` fixes the latter). Check the port with:
 
 ```bash
 lsof -nP -iTCP:8000 -sTCP:LISTEN

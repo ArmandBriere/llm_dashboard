@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -39,17 +40,16 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database...")
     init_db()
     init_usage_schema()
-    # Run initial collection
     logger.info("Running initial quota collection...")
     await collector.collect_once()
-    # Start 5-minute background collector. The pass above just ran, so don't
-    # immediately poll again.
+    # The pass above just ran, so the loop waits a full interval first.
     collector.start(skip_first=True)
     yield
     collector.stop()
 
 
 app = FastAPI(title="LLM Quota Tracker", version="1.0.0", lifespan=lifespan)
+
 
 # Enforce no-cache for local dev and live dashboard
 @app.middleware("http")
@@ -59,6 +59,7 @@ async def add_no_cache_headers(request, call_next):
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
+
 
 # Allow CORS for development convenience
 app.add_middleware(
@@ -256,8 +257,6 @@ def api_usage_skill_timeline(
 @app.post("/api/usage/rescan")
 async def api_usage_rescan() -> dict[str, Any]:
     """Index new transcript lines right now."""
-    import asyncio
-
     return await asyncio.to_thread(scan_transcripts)
 
 
@@ -267,6 +266,7 @@ def api_status() -> dict[str, Any]:
     return {
         "status": collector.last_run_status,
         "last_run_time": collector.last_run_time,
+        "next_run_time": collector.next_run_time,
         "interval_seconds": collector.interval_seconds,
         "usage_scan": collector.last_usage_scan,
     }

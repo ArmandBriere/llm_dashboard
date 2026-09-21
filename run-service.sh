@@ -21,15 +21,10 @@ for f in "$LOG_DIR/stdout.log" "$LOG_DIR/stderr.log"; do
     fi
 done
 
-# Bootstrap the venv if it is missing (e.g. fresh clone).
+# Bootstrap the venv if it is missing (e.g. fresh clone). `make deploy` keeps
+# it in sync afterwards; doing it here on every restart would need the network.
 if [ ! -x ".venv/bin/python" ]; then
-    if command -v uv >/dev/null 2>&1; then
-        uv venv .venv
-        uv pip install -r requirements.txt --python .venv/bin/python
-    else
-        python3 -m venv .venv
-        .venv/bin/pip install -r requirements.txt
-    fi
+    uv sync --no-dev --quiet
 fi
 
 CMD=(.venv/bin/python -m uvicorn backend.main:app --host "$HOST" --port "$PORT")

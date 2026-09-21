@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+.ruff_cache/
 
 # Local data: quota history and transcript index, plus backups
 llm_dashboard.db
@@ -22,3 +23,6 @@ com.armandbriere.llm-dashboard.plist
 
 # Playwright MCP scratch output (screenshots, console logs)
 .playwright-mcp/
+
+# Formatting tools (prettier)
+node_modules/

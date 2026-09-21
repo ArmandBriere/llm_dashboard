@@ -34,7 +34,10 @@ function tokens() {
   if (tokenCache) return tokenCache;
   const cs = getComputedStyle(document.documentElement);
   const read = (name) => cs.getPropertyValue(name).trim();
-  const rgb = (name) => read(name).split(/[\s,]+/).map(Number);
+  const rgb = (name) =>
+    read(name)
+      .split(/[\s,]+/)
+      .map(Number);
 
   const account = (i) => ({
     key: `acct-${i}`,
@@ -107,7 +110,8 @@ function renderThemeMenu() {
   const list = document.getElementById("theme-list");
   if (!list) return;
   const active = currentTheme();
-  list.innerHTML = THEMES.map((t) => `
+  list.innerHTML = THEMES.map(
+    (t) => `
     <button class="theme-option ${t.id === active ? "is-active" : ""}" role="menuitemradio"
             aria-checked="${t.id === active}" data-theme="${t.id}" onclick="selectTheme('${t.id}')">
       <span class="theme-swatches" aria-hidden="true">
@@ -120,7 +124,8 @@ function renderThemeMenu() {
         <span class="theme-option-name">${t.name}</span>
         <span class="theme-option-note">${t.note}</span>
       </span>
-    </button>`).join("");
+    </button>`,
+  ).join("");
 
   const label = document.getElementById("theme-current");
   if (label) label.textContent = (THEMES.find((t) => t.id === active) || THEMES[0]).name;
@@ -155,7 +160,8 @@ function toggleThemeMenu(event) {
   if (event) event.stopPropagation();
   const menu = document.getElementById("theme-menu");
   if (!menu) return;
-  if (menu.hidden) openThemeMenu(); else closeThemeMenu();
+  if (menu.hidden) openThemeMenu();
+  else closeThemeMenu();
 }
 
 function onDocumentClick(event) {

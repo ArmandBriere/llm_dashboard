@@ -7,15 +7,16 @@ smart reset event detection, and filtered time-series queries.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "llm_dashboard.db"
-DB_PATH = Path(os.environ.get("LLM_DASHBOARD_DB_PATH", str(DEFAULT_DB_PATH)))
+from backend.config import db_path
+
+DB_PATH = db_path()
 
 # A provider that cannot resolve an account's profile falls back to a
 # placeholder identity on the @claude.ai domain. Real subscriptions are always
@@ -73,7 +74,7 @@ def get_db(db_path: Path | str | None = None) -> Generator[sqlite3.Connection, N
                 is_stale INTEGER DEFAULT 0,
                 raw_json TEXT
             );
-            CREATE INDEX IF NOT EXISTS idx_snapshots_sub_time 
+            CREATE INDEX IF NOT EXISTS idx_snapshots_sub_time
             ON quota_snapshots(subscription_id, timestamp);
             CREATE TABLE IF NOT EXISTS quota_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,7 +84,7 @@ def get_db(db_path: Path | str | None = None) -> Generator[sqlite3.Connection, N
                 description TEXT NOT NULL,
                 metadata_json TEXT
             );
-            CREATE INDEX IF NOT EXISTS idx_events_sub_time 
+            CREATE INDEX IF NOT EXISTS idx_events_sub_time
             ON quota_events(subscription_id, timestamp);
             """
         )
@@ -129,7 +130,7 @@ def init_db(db_path: Path | str | None = None) -> None:
                 raw_json TEXT
             );
 
-            CREATE INDEX IF NOT EXISTS idx_snapshots_sub_time 
+            CREATE INDEX IF NOT EXISTS idx_snapshots_sub_time
             ON quota_snapshots(subscription_id, timestamp);
 
             CREATE TABLE IF NOT EXISTS quota_events (
@@ -169,7 +170,7 @@ def upsert_subscription(
 ) -> dict[str, Any]:
     """Insert or update a subscription record."""
     with get_db(db_path) as conn:
-        now_str = datetime.now(timezone.utc).isoformat()
+        now_str = datetime.now(UTC).isoformat()
         # Find existing by account_uuid or email
         cur = conn.execute(
             "SELECT * FROM subscriptions WHERE (account_uuid IS NOT NULL AND account_uuid = ?) OR email = ?",
@@ -237,7 +238,7 @@ def has_passed(iso_str: str | None) -> bool:
         dt = datetime.fromisoformat(str(iso_str).replace("Z", "+00:00"))
     except ValueError:
         return False
-    return dt <= datetime.now(timezone.utc)
+    return dt <= datetime.now(UTC)
 
 
 def format_countdown(iso_str: str | None) -> str:
@@ -246,7 +247,7 @@ def format_countdown(iso_str: str | None) -> str:
         return "Unknown"
     try:
         dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         diff_s = int((dt - now).total_seconds())
         if diff_s <= 0:
             return "Refreshing now"
@@ -326,7 +327,7 @@ def record_event(
     db_path: Path | str | None = None,
 ) -> int:
     """Record a quota or reset event."""
-    ts = timestamp or datetime.now(timezone.utc).isoformat()
+    ts = timestamp or datetime.now(UTC).isoformat()
     meta_json = json.dumps(metadata or {})
     with get_db(db_path) as conn:
         cur = conn.execute(
@@ -348,7 +349,7 @@ def _parse_iso(iso_str: str | None) -> datetime | None:
     except ValueError:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -381,7 +382,7 @@ def is_five_hour_reset(
     if prev_deadline is None:
         return False
 
-    now = _parse_iso(observed_at) or datetime.now(timezone.utc)
+    now = _parse_iso(observed_at) or datetime.now(UTC)
     if prev_deadline <= now:
         return True
 
@@ -412,7 +413,7 @@ def insert_snapshot(
     db_path: Path | str | None = None,
 ) -> int:
     """Record a new quota snapshot and automatically detect reset/exhaustion events."""
-    ts = timestamp or datetime.now(timezone.utc).isoformat()
+    ts = timestamp or datetime.now(UTC).isoformat()
     raw_json = json.dumps(raw_data) if raw_data is not None else None
 
     prev = get_latest_snapshot(subscription_id, db_path=db_path)
