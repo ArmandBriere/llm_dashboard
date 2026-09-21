@@ -73,7 +73,9 @@ COLUMN` guarded by a `PRAGMA table_info` check. The database holds history
   that cannot be re-fetched, so never write a migration that drops data.
 - **Deploy is not `git pull`.** launchd serves `~/src/llm_dashboard`, not the
   worktree you edit. `make deploy` is the only supported path; `docs/deploying.md`
-  explains why. Never run `git clean -xfd` there: the database lives inside it.
+  explains why. Never run `git clean -xfd` there: the database lives inside it,
+  and never `sudo` it: the agent is per-user (`gui/<uid>`), so root only earns an
+  opaque launchctl 125 plus root-owned files in the runtime checkout.
 - **Naming trap**: the repo directory is `llm_dashboard` (underscore); the
   launchd label and log directory are `llm-dashboard` (hyphen).
 

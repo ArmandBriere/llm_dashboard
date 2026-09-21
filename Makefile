@@ -37,7 +37,8 @@ PRETTIER := node_modules/.bin/prettier
 SHELL_SCRIPTS := start.sh run-service.sh service.sh
 
 .PHONY: help setup venv node_modules run dev test lint format check \
-        deploy sync deps restart verify log rollback install uninstall status logs stop port
+        deploy sync deps restart verify log rollback install uninstall status logs stop port \
+        not-root
 
 ##@ Development (this checkout)
 
@@ -86,7 +87,7 @@ check: lint test ## Everything CI runs
 
 ##@ Service (the runtime checkout under RUNTIME_DIR)
 
-deploy: sync deps restart verify ## Deploy REF to the running service
+deploy: not-root sync deps restart verify ## Deploy REF to the running service
 	@echo "==> Deployed $(REF) to $(RUNTIME_DIR) — $(URL)"
 
 sync: ## Fast-forward the runtime checkout to REF
@@ -107,7 +108,7 @@ deps: ## Sync the runtime venv against uv.lock (runtime dependencies only)
 # A kickstart reuses the already-rendered plist, so a template change needs a
 # full install instead. Comparing against the rendered copy also covers the
 # not-yet-installed case.
-restart: ## Restart the service, reinstalling the agent if the plist template moved
+restart: not-root ## Restart the service, reinstalling the agent if the plist template moved
 	@if [ ! -f "$(PLIST)" ] || ! sed -e 's|__APP_DIR__|$(RUNTIME_DIR)|g' -e 's|__HOME__|$(HOME)|g' \
 		  "$(TEMPLATE)" | diff -q - "$(PLIST)" >/dev/null 2>&1; then \
 		echo "==> Agent plist is stale or missing — reinstalling"; \
@@ -139,15 +140,15 @@ verify: ## Check the service is listening and report what it is serving
 log: ## Recent history of the runtime checkout
 	@git -C "$(RUNTIME_DIR)" log --oneline -10
 
-rollback: ## Reset the runtime to SHA and restart: make rollback SHA=abc1234
+rollback: not-root ## Reset the runtime to SHA and restart: make rollback SHA=abc1234
 	@test -n "$(SHA)" || { echo "ERROR: pass SHA=<good-sha>; 'make log' lists candidates"; exit 1; }
 	@git -C "$(RUNTIME_DIR)" reset --hard "$(SHA)"
 	@$(MAKE) --no-print-directory deps restart verify
 
-install: ## Render the plist, load the agent, start it now
+install: not-root ## Render the plist, load the agent, start it now
 	@"$(SERVICE)" install
 
-uninstall: ## Stop the service and remove the agent
+uninstall: not-root ## Stop the service and remove the agent
 	@"$(SERVICE)" uninstall
 
 status: ## Service state / pid / last exit code
@@ -157,9 +158,21 @@ logs: ## Tail the service logs
 	@"$(SERVICE)" logs
 
 # bootout leaves the rendered plist in place, so 'make install' brings it back.
-stop: ## Unload the service to free the port (make install restarts it)
+stop: not-root ## Unload the service to free the port (make install restarts it)
 	@launchctl bootout "$(DOMAIN)/$(LABEL)" 2>/dev/null || true
 	@echo "Unloaded $(LABEL) — 'make install' brings it back"
+
+# The dashboard is a per-user LaunchAgent in the gui/<uid> domain. sudo makes
+# the uid 0, where that domain does not exist — launchctl fails with an opaque
+# "Domain does not support specified action" (125) — and on the way there git
+# and uv would write root-owned files into the runtime checkout. Nothing in this
+# deploy wants privileges, so refuse before any of that happens.
+not-root:
+	@if [ "$$(id -u)" -eq 0 ]; then \
+		echo "ERROR: do not run this with sudo — the deploy is entirely user-scoped."; \
+		echo "       Run it as $${SUDO_USER:-your own user}, without sudo."; \
+		exit 1; \
+	fi
 
 port: ## Show what is holding PORT
 	@lsof -nP -iTCP:$(PORT) -sTCP:LISTEN || echo "nothing listening on $(PORT)"

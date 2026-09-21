@@ -15,6 +15,16 @@ TARGET="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
 LOG_DIR="$HOME/Library/Logs/llm-dashboard"
 
+# Everything here is user-scoped: a LaunchAgent lives in the gui/<uid> domain,
+# which only exists for a logged-in user. Under sudo the uid is 0, gui/0 is not
+# a real domain, and launchctl reports that as an opaque "Domain does not
+# support specified action" (125). Refuse up front instead.
+if [ "$(id -u)" -eq 0 ]; then
+    echo "ERROR: do not run this with sudo — $LABEL is a per-user LaunchAgent." >&2
+    echo "       Run it as ${SUDO_USER:-your own user}, without sudo." >&2
+    exit 1
+fi
+
 install_agent() {
     mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
     sed -e "s|__APP_DIR__|$DIR|g" -e "s|__HOME__|$HOME|g" "$TEMPLATE" > "$TARGET"
@@ -33,7 +43,16 @@ case "${1:-status}" in
     uninstall) launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
                rm -f "$TARGET"
                echo "Removed $LABEL" ;;
-    restart)   launchctl kickstart -k "$DOMAIN/$LABEL"; echo "Restarted $LABEL" ;;
+    restart)   # Nothing to kickstart if the agent was booted out (./service.sh
+               # uninstall, make stop, a failed install). Bootstrap it instead
+               # of failing with launchctl's "Could not find service" (113).
+               if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+                   launchctl kickstart -k "$DOMAIN/$LABEL"
+                   echo "Restarted $LABEL"
+               else
+                   echo "$LABEL is not loaded — installing it"
+                   install_agent
+               fi ;;
     status)    launchctl print "$DOMAIN/$LABEL" 2>/dev/null \
                  | grep -E '^\s+(state|pid|last exit code|program) ' || echo "$LABEL is not loaded" ;;
     logs)      tail -f "$LOG_DIR/stdout.log" "$LOG_DIR/stderr.log" ;;
