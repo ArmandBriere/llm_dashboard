@@ -15,9 +15,9 @@ service itself — why it is a LaunchAgent, install, configuration, sleep — se
 The backend is Python run from source and the frontend is static files served off
 disk. Nothing is compiled, bundled, or copied into a separate artifact:
 
-| Layer | How it is served |
-|---|---|
-| Backend | `uvicorn backend.main:app`, run from the checkout by `run-service.sh`. |
+| Layer    | How it is served                                                                                                        |
+| -------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Backend  | `uvicorn backend.main:app`, run from the checkout by `run-service.sh`.                                                  |
 | Frontend | `app.mount("/static", StaticFiles(directory=FRONTEND_DIR))` in `backend/main.py`, reading `frontend/` on every request. |
 
 So "deploying" means exactly one thing: **make the runtime checkout's working
@@ -28,7 +28,7 @@ server-side.** Merging a PR on GitHub does nothing to this Mac on its own.
 
 ## Find the runtime first
 
-The directory launchd runs from is authoritative, and it is *not* wherever you
+The directory launchd runs from is authoritative, and it is _not_ wherever you
 happen to be editing. If you work in git worktrees (`~/.t3/worktrees/llm_dashboard/<branch>`),
 your working copy and the runtime are different directories on different refs.
 
@@ -60,7 +60,7 @@ cd ~/src/llm_dashboard
 git fetch origin
 git status --short                                          # expect no output
 git merge --ff-only origin/main
-uv pip install -r requirements.txt --python .venv/bin/python
+uv sync --no-dev
 ./service.sh restart
 ```
 
@@ -80,27 +80,27 @@ Two deliberate choices in there:
   `origin/main` — someone committed directly into it. Resolve that on purpose
   rather than letting a merge commit appear in the runtime.
 
-The dependency sync is cheap when nothing changed (`Checked 5 packages in 15ms`),
-so it is worth running unconditionally rather than remembering whether
-`requirements.txt` moved.
+The dependency sync is cheap when nothing changed (`uv sync` only compares the
+lockfile against the venv), so it is worth running unconditionally rather than
+remembering whether `uv.lock` moved.
 
 ---
 
 ## What needs a restart
 
-| Changed | Action |
-|---|---|
-| `frontend/**` | **Nothing.** Reload the browser. |
-| `backend/**` | `./service.sh restart` — uvicorn does not run with `--reload`. |
-| `requirements.txt` | `uv pip install -r requirements.txt --python .venv/bin/python`, then restart. |
-| `run-service.sh` | `./service.sh restart`. |
-| `*.plist.template` | `./service.sh install` — it re-renders the plist. A restart alone reuses the old one. |
+| Changed                      | Action                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------- |
+| `frontend/**`                | **Nothing.** Reload the browser.                                                      |
+| `backend/**`                 | `./service.sh restart` — uvicorn does not run with `--reload`.                        |
+| `pyproject.toml` / `uv.lock` | `uv sync --no-dev` (or `make deps`), then restart.                                    |
+| `run-service.sh`             | `./service.sh restart`.                                                               |
+| `*.plist.template`           | `./service.sh install` — it re-renders the plist. A restart alone reuses the old one. |
 
 `make` covers every row unconditionally: `make restart` diffs the rendered plist
 against the template and escalates to `service.sh install` when they differ, so
 you never have to remember which of the two a change needed.
 
-Frontend changes need no restart *and* no hard reload: `StaticFiles` re-reads
+Frontend changes need no restart _and_ no hard reload: `StaticFiles` re-reads
 from disk per request, and the `add_no_cache_headers` middleware in
 `backend/main.py` stamps `Cache-Control: no-store, must-revalidate` on every
 response. The `?v=` query strings in `index.html` are belt-and-braces for
@@ -143,7 +143,7 @@ as far as git is concerned.
 
 **Never run `git clean -xfd` in the runtime checkout.** `llm_dashboard.db` lives
 inside it and holds all quota history and the transcript index (tens of MB, and
-not reconstructible: the Anthropic usage API only reports *current* utilization).
+not reconstructible: the Anthropic usage API only reports _current_ utilization).
 `.venv/` would go with it. If you need the checkout pristine, back the database
 up first or point `LLM_DASHBOARD_DB_PATH` outside the repo.
 
@@ -152,7 +152,7 @@ up first or point `LLM_DASHBOARD_DB_PATH` outside the repo.
 ## Gotchas
 
 **A restart forces an immediate collection pass, which can come back empty.**
-Startup runs one collection before the 5-minute loop begins. Anthropic's
+Startup runs one collection before the polling loop begins. Anthropic's
 `/api/oauth/usage` rate-limits, and on a 429 the provider falls back to its disk
 cache — but if the quota window already reset, that cache is discarded as stale,
 so the pass records 0 accounts:
@@ -164,7 +164,7 @@ so the pass records 0 accounts:
 ```
 
 This is not a failed deploy. The chart may look empty or stalled until the next
-successful poll (≤ 5 min). Restarting repeatedly to "fix" it makes the 429s
+successful poll (one `LLM_DASHBOARD_POLL_SECONDS`, 5 minutes by default). Restarting repeatedly to "fix" it makes the 429s
 worse. Confirm recovery with `curl -s http://127.0.0.1:8000/api/status`.
 
 **Port 8000 may already be taken by a foreground run.** `./start.sh` in a
