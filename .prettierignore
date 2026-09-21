@@ -1,0 +1,8 @@
+.venv/
+node_modules/
+.pytest_cache/
+.ruff_cache/
+.playwright-mcp/
+uv.lock
+bun.lock
+*.db

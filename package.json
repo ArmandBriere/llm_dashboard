@@ -1,0 +1,12 @@
+{
+  "name": "llm-dashboard",
+  "private": true,
+  "description": "Formatting tools for the static frontend and the docs. The app itself has no build step.",
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "^3.9.8"
+  }
+}
