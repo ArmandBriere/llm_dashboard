@@ -15,15 +15,18 @@ subscription row, so a transcript's home directory maps to a subscription.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import sqlite3
 import time
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
+from backend.claude_home import DEFAULT_KEYCHAIN_SERVICE as DEFAULT_KEYCHAIN_SERVICE
+from backend.claude_home import discover_claude_homes as discover_homes
+from backend.claude_home import keychain_service_for_home
 from backend.database import RESET_WINDOW_TOLERANCE_S, get_db
 from backend.pricing import estimate_cost_usd, pretty_model_name
 from backend.skills import (
@@ -35,14 +38,13 @@ from backend.skills import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_KEYCHAIN_SERVICE = "Claude Code-credentials"
-
 
 # --------------------------------------------------------------------------- #
 # Schema
 # --------------------------------------------------------------------------- #
 
-USAGE_SCHEMA = """
+USAGE_SCHEMA = (
+    """
 CREATE TABLE IF NOT EXISTS usage_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     path TEXT NOT NULL UNIQUE,
@@ -96,7 +98,9 @@ CREATE TABLE IF NOT EXISTS usage_sessions (
     first_prompt TEXT,
     first_prompt_at TEXT
 );
-""" + SKILLS_SCHEMA
+"""
+    + SKILLS_SCHEMA
+)
 
 # Bumped whenever a scan extracts something new from lines it has already read.
 # A transcript indexed by an older version is re-read from the start, after its
@@ -177,22 +181,9 @@ def canonical_project(cwd: str | None) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def keychain_service_for_home(home_dir: Path) -> str:
-    """Return the keychain service name Claude Code uses for a config directory."""
-    if home_dir.name == ".claude":
-        return DEFAULT_KEYCHAIN_SERVICE
-    digest = hashlib.sha256(str(home_dir).encode("utf-8")).hexdigest()[:8]
-    return f"{DEFAULT_KEYCHAIN_SERVICE}-{digest}"
-
-
 def discover_claude_homes(user_home: Path | None = None) -> list[Path]:
     """Find every ``~/.claude*`` directory that holds session transcripts."""
-    base = user_home or Path.home()
-    homes = []
-    for d in sorted(base.glob(".claude*")):
-        if d.is_dir() and not d.name.endswith(".backup") and (d / "projects").is_dir():
-            homes.append(d)
-    return homes
+    return discover_homes(user_home, with_transcripts=True)
 
 
 def resolve_account_subscriptions(conn: sqlite3.Connection, homes: Iterable[Path]) -> dict[str, int | None]:
@@ -215,8 +206,8 @@ def _normalize_ts(ts: str | None) -> str | None:
         s = ts.replace("Z", "+00:00")
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc).isoformat()
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC).isoformat()
     except ValueError:
         return None
 
@@ -353,12 +344,11 @@ def _scan_file(
     except ValueError:
         project_slug = path.parent.name
         session_id = path.stem
-    row = conn.execute(
-        "SELECT id, size, offset, scan_version FROM usage_files WHERE path = ?", (str(path),)
-    ).fetchone()
+    row = conn.execute("SELECT id, size, offset, scan_version FROM usage_files WHERE path = ?", (str(path),)).fetchone()
     if row is None:
         cur = conn.execute(
-            "INSERT INTO usage_files (path, account_key, project_slug, session_id, size, mtime, offset) VALUES (?,?,?,?,0,0,0)",
+            "INSERT INTO usage_files (path, account_key, project_slug, session_id, size, mtime, offset) "
+            "VALUES (?,?,?,?,0,0,0)",
             (str(path), account_key, project_slug, session_id),
         )
         file_id = cur.lastrowid
@@ -381,7 +371,9 @@ def _scan_file(
     titles: dict[str, str] = {}
     first_prompt: tuple[str, str | None] | None = None
     have_prompt = bool(
-        conn.execute("SELECT 1 FROM usage_sessions WHERE session_id = ? AND first_prompt IS NOT NULL", (session_id,)).fetchone()
+        conn.execute(
+            "SELECT 1 FROM usage_sessions WHERE session_id = ? AND first_prompt IS NOT NULL", (session_id,)
+        ).fetchone()
     )
 
     with open(path, "rb") as fh:
@@ -460,7 +452,7 @@ def _scan_file(
 
     conn.execute(
         "UPDATE usage_files SET size = ?, mtime = ?, offset = ?, scan_version = ?, last_scanned_at = ? WHERE id = ?",
-        (stat.st_size, stat.st_mtime, offset, SCAN_VERSION, datetime.now(timezone.utc).isoformat(), file_id),
+        (stat.st_size, stat.st_mtime, offset, SCAN_VERSION, datetime.now(UTC).isoformat(), file_id),
     )
     return written
 
@@ -579,7 +571,9 @@ def _finish_row(d: dict[str, Any]) -> dict[str, Any]:
     return d
 
 
-def get_usage_summary(subscription_ids=None, date_str=None, start_hour=None, end_hour=None, db_path=None) -> dict[str, Any]:
+def get_usage_summary(
+    subscription_ids=None, date_str=None, start_hour=None, end_hour=None, db_path=None
+) -> dict[str, Any]:
     """Totals for the filtered window, overall and per account."""
     where, params = _filters(subscription_ids, date_str, start_hour, end_hour)
     with get_db(db_path) as conn:
@@ -593,7 +587,9 @@ def get_usage_summary(subscription_ids=None, date_str=None, start_hour=None, end
             ).fetchall()
         ]
         # History span is deliberately unfiltered: it describes the index, not the view.
-        span = conn.execute("SELECT MIN(timestamp) AS first_turn, MAX(timestamp) AS last_turn FROM usage_turns").fetchone()
+        span = conn.execute(
+            "SELECT MIN(timestamp) AS first_turn, MAX(timestamp) AS last_turn FROM usage_turns"
+        ).fetchone()
         scan = conn.execute(
             "SELECT COUNT(*) AS files, MAX(last_scanned_at) AS last_scanned_at FROM usage_files"
         ).fetchone()
@@ -606,7 +602,9 @@ def get_usage_summary(subscription_ids=None, date_str=None, start_hour=None, end
     return result
 
 
-def get_usage_by_model(subscription_ids=None, date_str=None, start_hour=None, end_hour=None, db_path=None) -> list[dict[str, Any]]:
+def get_usage_by_model(
+    subscription_ids=None, date_str=None, start_hour=None, end_hour=None, db_path=None
+) -> list[dict[str, Any]]:
     """Per-model totals with share of turns, tokens and estimated cost."""
     where, params = _filters(subscription_ids, date_str, start_hour, end_hour)
     with get_db(db_path) as conn:
@@ -669,7 +667,12 @@ def get_usage_sessions(
     by_session: dict[str, list[dict[str, Any]]] = {}
     for m in models:
         by_session.setdefault(m["session_id"], []).append(
-            {"model": m["model"], "model_label": pretty_model_name(m["model"]), "turns": m["turns"], "est_cost_usd": m["est_cost_usd"]}
+            {
+                "model": m["model"],
+                "model_label": pretty_model_name(m["model"]),
+                "turns": m["turns"],
+                "est_cost_usd": m["est_cost_usd"],
+            }
         )
     for s in sessions:
         m = meta.get(s["session_id"], {})
@@ -681,11 +684,17 @@ def get_usage_sessions(
         end = datetime.fromisoformat(s["ended_at"])
         s["duration_s"] = max(0.0, (end - start).total_seconds())
         s["project_name"] = s.get("project") or (Path(s["project_dir"]).name if s.get("project_dir") else None)
-        s["worktree"] = Path(s["project_dir"]).name if s.get("project_dir") and Path(s["project_dir"]).name != s["project_name"] else None
+        s["worktree"] = (
+            Path(s["project_dir"]).name
+            if s.get("project_dir") and Path(s["project_dir"]).name != s["project_name"]
+            else None
+        )
     return sessions
 
 
-def get_usage_projects(subscription_ids=None, date_str=None, start_hour=None, end_hour=None, limit: int = 15, db_path=None) -> list[dict[str, Any]]:
+def get_usage_projects(
+    subscription_ids=None, date_str=None, start_hour=None, end_hour=None, limit: int = 15, db_path=None
+) -> list[dict[str, Any]]:
     where, params = _filters(subscription_ids, date_str, start_hour, end_hour)
     with get_db(db_path) as conn:
         rows = conn.execute(
@@ -706,7 +715,9 @@ def get_usage_projects(subscription_ids=None, date_str=None, start_hour=None, en
     return out
 
 
-def get_usage_heatmap(subscription_ids=None, date_str=None, start_hour=None, end_hour=None, db_path=None) -> list[dict[str, Any]]:
+def get_usage_heatmap(
+    subscription_ids=None, date_str=None, start_hour=None, end_hour=None, db_path=None
+) -> list[dict[str, Any]]:
     """Weekday x hour matrix (local time) of turns, tokens and cost."""
     where, params = _filters(subscription_ids, date_str, start_hour, end_hour)
     with get_db(db_path) as conn:
@@ -715,7 +726,8 @@ def get_usage_heatmap(subscription_ids=None, date_str=None, start_hour=None, end
             SELECT CAST(strftime('%w', datetime(t.timestamp, 'localtime')) AS INTEGER) AS weekday,
                    CAST(strftime('%H', datetime(t.timestamp, 'localtime')) AS INTEGER) AS hour,
                    COUNT(*) AS turns,
-                   SUM(t.input_tokens + t.cache_creation_tokens + t.cache_read_tokens + t.output_tokens) AS total_tokens,
+                   SUM(t.input_tokens + t.cache_creation_tokens + t.cache_read_tokens + t.output_tokens)
+                       AS total_tokens,
                    SUM(t.output_tokens) AS output_tokens,
                    SUM(t.est_cost_usd) AS est_cost_usd
             FROM usage_turns t {where}
@@ -738,7 +750,8 @@ def get_usage_timeline(
             SELECT strftime('{fmt}', datetime(t.timestamp, 'localtime')) AS bucket,
                    t.model,
                    COUNT(*) AS turns,
-                   SUM(t.input_tokens + t.cache_creation_tokens + t.cache_read_tokens + t.output_tokens) AS total_tokens,
+                   SUM(t.input_tokens + t.cache_creation_tokens + t.cache_read_tokens + t.output_tokens)
+                       AS total_tokens,
                    SUM(t.output_tokens) AS output_tokens,
                    SUM(t.est_cost_usd) AS est_cost_usd
             FROM usage_turns t {where}
@@ -755,9 +768,7 @@ def get_usage_timeline(
     return out
 
 
-def get_five_hour_windows(
-    subscription_ids=None, date_str=None, limit: int = 12, db_path=None
-) -> list[dict[str, Any]]:
+def get_five_hour_windows(subscription_ids=None, date_str=None, limit: int = 12, db_path=None) -> list[dict[str, Any]]:
     """Attribute each observed 5-hour quota window to the models used inside it.
 
     A window is identified by the ``five_hour_resets_at`` deadline reported by
@@ -826,13 +837,13 @@ def get_five_hour_windows(
         windows.sort(key=lambda w: w["deadline"], reverse=True)
         windows = windows[:limit]
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         out = []
         for w in windows:
             deadline = w["deadline"]
             start = deadline.timestamp() - 5 * 3600
-            start_iso = datetime.fromtimestamp(start, tz=timezone.utc).isoformat()
-            end_iso = deadline.astimezone(timezone.utc).isoformat()
+            start_iso = datetime.fromtimestamp(start, tz=UTC).isoformat()
+            end_iso = deadline.astimezone(UTC).isoformat()
             turns = conn.execute(
                 f"""
                 SELECT t.model, {TOKEN_SUMS}
@@ -864,7 +875,8 @@ def get_five_hour_windows(
                     "last_seen": w["last_seen"],
                     "turns": sum(m["turns"] for m in models),
                     "sessions": conn.execute(
-                        "SELECT COUNT(DISTINCT session_id) FROM usage_turns WHERE subscription_id = ? AND timestamp >= ? AND timestamp < ?",
+                        "SELECT COUNT(DISTINCT session_id) FROM usage_turns "
+                        "WHERE subscription_id = ? AND timestamp >= ? AND timestamp < ?",
                         (w["subscription_id"], start_iso, end_iso),
                     ).fetchone()[0],
                     "total_tokens": total_tokens,

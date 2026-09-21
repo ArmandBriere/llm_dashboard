@@ -1,24 +1,33 @@
-"""Direct native Claude Code quota provider.
+"""Claude Code quota provider.
 
-Communicates directly with macOS Keychain and Anthropic's OAuth API.
-Does NOT use or depend on claude-swap.
+Reads each profile's OAuth credentials from the macOS keychain, refreshes the
+token when it is about to expire, and asks Anthropic's OAuth endpoints for the
+account profile and the live usage. Falls back to the readings Claude Code
+itself caches in ``.claude.json`` when the API rate-limits.
 """
 
 from __future__ import annotations
 
-import hashlib
+import getpass
 import json
 import logging
 import os
 import re
 import subprocess
 import time
-from datetime import datetime, timezone
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+from backend.claude_home import (
+    DEFAULT_KEYCHAIN_SERVICE,
+    config_file_for_home,
+    discover_claude_homes,
+    keychain_service_for_home,
+)
 from backend.providers.base import BaseProvider
 
 logger = logging.getLogger(__name__)
@@ -44,15 +53,11 @@ class ClaudeCodeProvider(BaseProvider):
         services: set[str] = set()
 
         # 1. Primary default service
-        services.add("Claude Code-credentials")
+        services.add(DEFAULT_KEYCHAIN_SERVICE)
 
-        # 2. Check known hashes from ~/.claude* directories
-        home = Path.home()
-        for d in home.glob(".claude*"):
-            if d.is_dir() and not d.name.endswith(".backup"):
-                path_str = str(d)
-                digest = hashlib.sha256(path_str.encode("utf-8")).hexdigest()[:8]
-                services.add(f"Claude Code-credentials-{digest}")
+        # 2. One entry per ~/.claude* directory, named by the hash of its path
+        for home_dir in discover_claude_homes(self.user_home):
+            services.add(keychain_service_for_home(home_dir))
 
         # 3. Discover from `security dump-keychain`
         try:
@@ -63,13 +68,12 @@ class ClaudeCodeProvider(BaseProvider):
                 timeout=5,
             )
             if res.returncode == 0:
-                matches = re.findall(r'"svce"<blob>="(Claude Code-credentials[^"]*)"', res.stdout)
-                for m in matches:
-                    services.add(m)
+                pattern = rf'"svce"<blob>="({re.escape(DEFAULT_KEYCHAIN_SERVICE)}[^"]*)"'
+                services.update(re.findall(pattern, res.stdout))
         except Exception as e:
             logger.debug("Failed to dump keychain: %s", e)
 
-        return sorted(list(services))
+        return sorted(services)
 
     def read_credentials_from_keychain(self, service_name: str) -> dict[str, Any] | None:
         """Read and parse credentials JSON from macOS Keychain."""
@@ -174,8 +178,9 @@ class ClaudeCodeProvider(BaseProvider):
             logger.warning("Failed to fetch profile: %s", e)
         return None
 
-    def __init__(self, username: str | None = None):
-        self.username = username or os.environ.get("USER") or "armand.briere"
+    def __init__(self, username: str | None = None, user_home: Path | None = None):
+        self.username = username or os.environ.get("USER") or getpass.getuser()
+        self.user_home = user_home or Path.home()
         self._last_known_usage: dict[str, dict[str, Any]] = {}
 
     @property
@@ -186,46 +191,47 @@ class ClaudeCodeProvider(BaseProvider):
     def display_name(self) -> str:
         return "Claude Code"
 
+    def _iter_local_configs(self) -> Iterator[tuple[str, dict[str, Any]]]:
+        """Yield ``(keychain_service, parsed .claude.json)`` for every Claude home.
+
+        Claude Code caches the signed-in account and the last usage reading in
+        each home's ``.claude.json``. It is the offline fallback when the
+        profile or usage endpoint is unavailable.
+        """
+        for home_dir in discover_claude_homes(self.user_home):
+            config_path = config_file_for_home(home_dir)
+            if not config_path.exists():
+                continue
+            try:
+                with open(config_path) as f:
+                    data = json.load(f)
+            except (OSError, ValueError) as e:
+                logger.debug("Could not read %s: %s", config_path, e)
+                continue
+            if isinstance(data, dict):
+                yield keychain_service_for_home(home_dir), data
+
     def _get_fallback_account_info(self, svc: str) -> dict[str, Any] | None:
-        """Derive account info from local .claude.json files based on service name or scan."""
-        home = Path.home()
-        dirs = [home, home / ".claude_vooban", home / ".claude_9router"]
-        for d in dirs:
-            json_file = d / ".claude.json" if d != home else home / ".claude.json"
-            if json_file.exists():
-                try:
-                    with open(json_file) as f:
-                        data = json.load(f)
-                        oauth = data.get("oauthAccount")
-                        if oauth and oauth.get("accountUuid"):
-                            path_str = str(d)
-                            digest = hashlib.sha256(path_str.encode("utf-8")).hexdigest()[:8]
-                            # If service matches or it's default
-                            if svc == f"Claude Code-credentials-{digest}" or (svc == "Claude Code-credentials" and d == home):
-                                return {
-                                    "account_uuid": oauth.get("accountUuid"),
-                                    "email": oauth.get("emailAddress"),
-                                    "organization_name": oauth.get("organizationName"),
-                                    "organization_uuid": oauth.get("organizationUuid"),
-                                }
-                except Exception:
-                    pass
+        """Derive account identity from the ``.claude.json`` that matches a keychain service."""
+        for service, data in self._iter_local_configs():
+            oauth = data.get("oauthAccount") or {}
+            if service == svc and oauth.get("accountUuid"):
+                return {
+                    "account_uuid": oauth.get("accountUuid"),
+                    "email": oauth.get("emailAddress"),
+                    "organization_name": oauth.get("organizationName"),
+                    "organization_uuid": oauth.get("organizationUuid"),
+                }
         return None
 
     def _read_local_cached_usage(self, account_uuid: str) -> dict[str, Any] | None:
-        """Search ~/.claude* json files for cachedUsageUtilization matching account_uuid."""
-        home = Path.home()
-        for p in [home / ".claude.json", home / ".claude_vooban" / ".claude.json", home / ".claude_9router" / ".claude.json"]:
-            if p.exists():
-                try:
-                    with open(p) as f:
-                        d = json.load(f)
-                        if d.get("oauthAccount", {}).get("accountUuid") == account_uuid:
-                            cached = d.get("cachedUsageUtilization", {})
-                            if cached and "utilization" in cached:
-                                return cached["utilization"]
-                except Exception:
-                    pass
+        """Find the ``cachedUsageUtilization`` Claude Code stored for an account."""
+        for _service, data in self._iter_local_configs():
+            if (data.get("oauthAccount") or {}).get("accountUuid") != account_uuid:
+                continue
+            cached = data.get("cachedUsageUtilization") or {}
+            if "utilization" in cached:
+                return cached["utilization"]
         return None
 
     @staticmethod
@@ -258,7 +264,7 @@ class ClaudeCodeProvider(BaseProvider):
                 dt = datetime.fromisoformat(str(resets_at).replace("Z", "+00:00"))
             except ValueError:
                 continue
-            if dt <= datetime.now(timezone.utc):
+            if dt <= datetime.now(UTC):
                 return True
         return False
 
@@ -315,15 +321,13 @@ class ClaudeCodeProvider(BaseProvider):
 
     def get_active_account_uuid(self) -> str | None:
         """Determine which account is currently active in the main ~/.claude.json."""
+        main_json = self.user_home / ".claude.json"
         try:
-            main_json = Path.home() / ".claude.json"
-            if main_json.exists():
-                with open(main_json) as f:
-                    data = json.load(f)
-                    return data.get("oauthAccount", {}).get("accountUuid")
-        except Exception:
-            pass
-        return None
+            with open(main_json) as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return None
+        return (data.get("oauthAccount") or {}).get("accountUuid")
 
     async def discover_and_fetch_all(self) -> list[dict[str, Any]]:
         """Discover accounts from Keychain, fetch identity and usage directly."""

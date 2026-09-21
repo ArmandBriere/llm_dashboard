@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+
 from backend.database import (
     get_events,
     get_latest_snapshot,

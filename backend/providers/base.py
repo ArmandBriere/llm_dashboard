@@ -13,13 +13,11 @@ class BaseProvider(ABC):
     @abstractmethod
     def provider_id(self) -> str:
         """Unique identifier for this provider (e.g. 'claude_code')."""
-        pass
 
     @property
     @abstractmethod
     def display_name(self) -> str:
         """Human readable name (e.g. 'Claude Code')."""
-        pass
 
     @abstractmethod
     async def discover_and_fetch_all(self) -> list[dict[str, Any]]:
@@ -48,4 +46,3 @@ class BaseProvider(ABC):
             }
         }
         """
-        pass
