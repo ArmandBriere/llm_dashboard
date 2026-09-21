@@ -1,15 +1,103 @@
 # LLM Quota Tracker
 
-A small local dashboard that tracks how much of your **Claude Code** quota you
-are using, across every Claude Code profile signed in on your Mac, and keeps
-the history so you can see when a window resets and what consumed it.
+**Claude Code tells you how much quota you have left. This tells you where it
+went.**
 
-It reads the same credentials Claude Code stores in the macOS keychain, asks
-Anthropic's usage endpoint for the live utilisation, and indexes the transcripts
-Claude Code writes locally to break usage down by model, session, project, tool
-and skill. Nothing leaves your machine except those API calls.
+A local dashboard that watches every Claude Code profile signed in on your Mac,
+keeps the history that the quota endpoint throws away on every reset, and reads
+your own transcripts to break the burn down by model, project, session, tool,
+plugin and skill.
 
-Python (FastAPI + SQLite) backend, static HTML/JS frontend, no build step.
+![The overview: live quota for every account, plus headline usage across all recorded history](docs/screenshots/overview.png)
+
+Everything stays on your machine. Python (FastAPI + SQLite) backend, static
+HTML/JS frontend, no build step, no telemetry, no account to create.
+
+## Why not just `/usage`?
+
+The built-in usage command answers one question — _how much is left, right
+now, for the account I am signed into._ That is the question you ask when you
+are already blocked. It is a live gauge with no memory: when your 5-hour window
+resets, the reading that would have explained it is gone.
+
+This tool is the flight recorder next to that gauge.
+
+| Question                                         | `/usage` | This dashboard                                       |
+| ------------------------------------------------ | -------- | ---------------------------------------------------- |
+| How much is left right now?                      | yes      | yes, pinned to the sidebar on every view             |
+| What did it look like an hour ago? Last Tuesday? | no       | full history, every reset and exhaustion marked      |
+| Across all my Claude Code profiles at once?      | no       | every profile on the machine, side by side           |
+| How many tokens exactly, per model?              | no       | exact counts from the transcripts, not percentages   |
+| Which project or session burned the window?      | no       | per-project and per-session breakdown                |
+| What are my skills and plugins costing me?       | no       | runs, injected context and attributed work per skill |
+
+The quota API only ever reports percentages. Your transcripts record the exact
+token counts the API returned for every single turn — input, cache write, cache
+read, output, thinking. Indexing them locally is what turns "you are at 87%"
+into "Opus 5 on the voice-orchestrator refactor, 6.2B tokens, mostly cache
+reads."
+
+### Never wonder where the window went
+
+Solid lines are the 5-hour window, dashed the weekly one. Every reset and every
+100% wall is marked, so a spike has a timestamp you can go look up.
+
+![Burn-down for a single day, climbing to 90% before the 5-hour window resets](docs/screenshots/burndown.png)
+
+### Real token counts, and proof the cache is working
+
+Model mix by estimated cost, and where the input tokens actually came from.
+Cache reads are a tenth the price of fresh input, so the hit rate is the single
+biggest lever on how fast a window drains.
+
+![Models and cache: model mix by share of estimated cost, and the cache read/write split](docs/screenshots/models.png)
+
+### Skills and plugins: the cost nobody else measures
+
+This is the part you cannot get anywhere else, and it is the reason the tool
+exists.
+
+A skill has no token usage of its own, so nothing reports on it. But every
+skill you load **injects its instruction text into the context of every
+subsequent turn**, and you pay for that on every one of them. A dashboard that
+only shows models cannot see this at all.
+
+![Skills: 529 invocations of 33 skills, 1.3M tokens of injected context, 13 that failed to load](docs/screenshots/skills.png)
+
+Three numbers, deliberately kept separate because they mean different things:
+
+- **Context injected** — what the skill costs you directly, just by loading.
+  Most plugin skills inject 1k–7k tokens; the bundled `claude-api` skill injects
+  about 142k. That is the difference between a rounding error and half a window.
+- **Runs** — how often it actually fires. A skill that injects 7k tokens and
+  runs twice a month is not the problem. One that injects 7k and runs 153 times
+  is.
+- **Attributed work** — the turns and tokens spent _after_ the skill loaded,
+  charged to the skill most recently loaded in that transcript, so the rows
+  partition the work instead of double-counting it.
+
+It also catches the thing nobody notices: **skills that fail to load.** In the
+screenshot above, 13 invocations came back `Unknown skill` — a broken or renamed
+skill, invoked over and over, costing a tool call and a retry every time.
+
+![Plugins ranked by estimated cost, with skill count, runs and MCP calls per plugin](docs/screenshots/plugins.png)
+
+Rolled up by plugin, that becomes an honest answer to a question every team
+asks after a month of enthusiastic plugin installation: **which of these are we
+actually using?** Skills shipped, runs, MCP calls and cost, per plugin, per
+version. The ones sitting at zero are just context tax.
+
+### Where the time and the tool calls go
+
+Cost per day stacked by model, a heatmap of when you actually work, and a
+leaderboard splitting tool calls into builtin, MCP server, skill and subagent.
+
+![Activity over time: daily cost stacked by model, and a day-by-hour heatmap](docs/screenshots/activity.png)
+
+![Tools: 52,765 calls split across builtin, MCP, skill and subagent, with a per-tool leaderboard](docs/screenshots/tools.png)
+
+_Screenshots are one developer's real machine over about two months: 1,706
+transcripts, 1,067 sessions, 8.27B tokens._
 
 ## What you get
 
@@ -25,6 +113,20 @@ Python (FastAPI + SQLite) backend, static HTML/JS frontend, no build step.
 - Runs as a **24/7 background service** on macOS so the history has no gaps
   while the Mac is awake.
 
+## Try it in two minutes
+
+```bash
+git clone git@github.com:ArmandBriere/llm_dashboard.git
+cd llm_dashboard
+make run
+```
+
+That is the whole setup. It finds your profiles in the keychain, starts
+collecting, and opens <http://127.0.0.1:8000>. The transcript index builds in
+the background — you will have months of history charted before you finish
+reading this README, because Claude Code has been writing those transcripts all
+along.
+
 ## Requirements
 
 | Tool                                                     | Why                                                                   | Install                        |
@@ -37,12 +139,6 @@ Python (FastAPI + SQLite) backend, static HTML/JS frontend, no build step.
 | shellcheck _(development only)_                          | Lints the shell scripts.                                              | `brew install shellcheck`      |
 
 ## Install and run
-
-```bash
-git clone git@github.com:ArmandBriere/llm_dashboard.git
-cd llm_dashboard
-make run
-```
 
 `make run` creates `.venv`, installs the dependencies and starts the server on
 <http://127.0.0.1:8000>, opening it in your browser. The first collection pass
