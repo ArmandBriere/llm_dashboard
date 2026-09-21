@@ -53,10 +53,13 @@ async function fetchJson(url) {
 
 function cachedJson(url, force) {
   if (force || !responseCache.has(url)) {
-    responseCache.set(url, fetchJson(url).catch((err) => {
-      responseCache.delete(url);
-      throw err;
-    }));
+    responseCache.set(
+      url,
+      fetchJson(url).catch((err) => {
+        responseCache.delete(url);
+        throw err;
+      }),
+    );
   }
   return responseCache.get(url);
 }
@@ -82,16 +85,19 @@ function accountPalette() {
 }
 
 function nameSlot(sub) {
-  const n = String((sub && (sub.organization_name || sub.email)) || "").toLowerCase().replace(/\s+/g, "");
+  const n = String((sub && (sub.organization_name || sub.email)) || "")
+    .toLowerCase()
+    .replace(/\s+/g, "");
   const slot = ACCOUNT_SLOT_BY_NAME[n];
   return slot == null ? null : slot;
 }
 
 function getAccountColor(subOrId) {
   const palette = accountPalette();
-  const sub = typeof subOrId === "object" && subOrId !== null
-    ? subOrId
-    : state.subscriptions.find((s) => String(s.id) === String(subOrId));
+  const sub =
+    typeof subOrId === "object" && subOrId !== null
+      ? subOrId
+      : state.subscriptions.find((s) => String(s.id) === String(subOrId));
 
   const named = nameSlot(sub);
   if (named != null) return palette[named % palette.length];
@@ -177,7 +183,9 @@ function syncFilterButtons() {
   setActive("btn-today", !isAllTime && getSelectedDateString() === getLocalDateString(new Date()));
   setActive("btn-all-dates", isAllTime);
   document.querySelectorAll("#hour-presets button").forEach((btn) => {
-    const [a, b] = String(btn.dataset.hours || "").split("-").map(Number);
+    const [a, b] = String(btn.dataset.hours || "")
+      .split("-")
+      .map(Number);
     btn.classList.toggle("active", a === state.startHour && b === state.endHour);
   });
   syncHourSlider();
@@ -189,7 +197,8 @@ function syncHourSlider() {
   const endInput = document.getElementById("filter-end-hour");
   const fill = document.getElementById("hour-range-fill");
   const label = document.getElementById("hour-range-label");
-  if (startInput && Number(startInput.value) !== state.startHour) startInput.value = state.startHour;
+  if (startInput && Number(startInput.value) !== state.startHour)
+    startInput.value = state.startHour;
   if (endInput && Number(endInput.value) !== state.endHour) endInput.value = state.endHour;
   if (fill) {
     const left = (state.startHour / 23) * 100;
@@ -214,7 +223,8 @@ function onHourSlider(which) {
   let end = clampHour(endInput.value, 23);
   // Thumbs may not cross: push the other one along.
   if (start > end) {
-    if (which === "start") end = start; else start = end;
+    if (which === "start") end = start;
+    else start = end;
   }
   state.startHour = start;
   state.endHour = end;
@@ -234,7 +244,11 @@ function renderWindowLabel() {
     return;
   }
 
-  const dateLabel = bounds.min.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  const dateLabel = bounds.min.toLocaleDateString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
   const timeOpts = { hour: "numeric", minute: "2-digit" };
   const isFullDay = state.startHour === 0 && state.endHour === 23;
   el.textContent = isFullDay
@@ -255,14 +269,17 @@ const VIEW_STORAGE_KEY = "llm-dashboard.view.v1";
 
 function saveViewState() {
   try {
-    localStorage.setItem(VIEW_STORAGE_KEY, JSON.stringify({
-      selectedSubIds: state.selectedSubIds ? Array.from(state.selectedSubIds) : null,
-      selectedDate: state.selectedDate,
-      startHour: state.startHour,
-      endHour: state.endHour,
-      displayMode: state.displayMode,
-      usageWeight: state.usageWeight,
-    }));
+    localStorage.setItem(
+      VIEW_STORAGE_KEY,
+      JSON.stringify({
+        selectedSubIds: state.selectedSubIds ? Array.from(state.selectedSubIds) : null,
+        selectedDate: state.selectedDate,
+        startHour: state.startHour,
+        endHour: state.endHour,
+        displayMode: state.displayMode,
+        usageWeight: state.usageWeight,
+      }),
+    );
   } catch (err) {
     console.warn("Could not save view settings:", err);
   }
@@ -280,7 +297,11 @@ function restoreViewState() {
   if (Array.isArray(saved.selectedSubIds) && saved.selectedSubIds.length > 0) {
     state.selectedSubIds = new Set(saved.selectedSubIds.map(String));
   }
-  if (saved.selectedDate === "all" || saved.selectedDate === "today" || /^\d{4}-\d{2}-\d{2}$/.test(saved.selectedDate || "")) {
+  if (
+    saved.selectedDate === "all" ||
+    saved.selectedDate === "today" ||
+    /^\d{4}-\d{2}-\d{2}$/.test(saved.selectedDate || "")
+  ) {
     state.selectedDate = saved.selectedDate;
   }
   if (Number.isInteger(saved.startHour) && Number.isInteger(saved.endHour)) {
@@ -320,12 +341,41 @@ async function initDashboard() {
   // loaded and polled regardless of which view is open.
   await loadSubscriptions();
   await initNav();
+  loadCollectorStatus();
 
   if (state.pollingInterval) clearInterval(state.pollingInterval);
   state.pollingInterval = setInterval(async () => {
     await loadSubscriptions(false);
     await refreshCurrentView({ force: true });
   }, 30000);
+}
+
+/** Describe a poll interval in words: 300 -> "5 minutes", 45 -> "45 seconds". */
+function formatInterval(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  if (seconds % 3600 === 0) return seconds === 3600 ? "hour" : `${seconds / 3600} hours`;
+  if (seconds % 60 === 0) return seconds === 60 ? "minute" : `${seconds / 60} minutes`;
+  return `${seconds} seconds`;
+}
+
+// The interval is server configuration (LLM_DASHBOARD_POLL_SECONDS), so the
+// footer and the lamp tooltip read it from /api/status instead of hard-coding.
+async function loadCollectorStatus() {
+  try {
+    const res = await fetch("/api/status");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const status = await res.json();
+    const every = formatInterval(status.interval_seconds);
+    if (!every) return;
+    const summary = document.getElementById("poll-summary");
+    if (summary) {
+      summary.textContent = `Polls the Anthropic OAuth usage API every ${every} · credentials read from the macOS Keychain`;
+    }
+    const lamp = document.getElementById("live-indicator");
+    if (lamp) lamp.title = `Polling the Anthropic usage API every ${every}`;
+  } catch (err) {
+    console.error("Failed to load collector status:", err);
+  }
 }
 
 async function loadSubscriptions(updateDropdown = true) {
@@ -392,10 +442,12 @@ function animateGaugesOnce(container) {
     const pct = el.dataset.pct;
     if (el.classList.contains("gauge-fill")) el.style.width = "0%";
     else el.style.left = "0%";
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (el.classList.contains("gauge-fill")) el.style.width = `${pct}%`;
-      else el.style.left = `${pct}%`;
-    }));
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (el.classList.contains("gauge-fill")) el.style.width = `${pct}%`;
+        else el.style.left = `${pct}%`;
+      }),
+    );
   });
 }
 
@@ -419,8 +471,10 @@ function renderSubscriptionCards(subs) {
       const fiveHourPct = snap.five_hour_pct != null ? snap.five_hour_pct : 0;
       const sevenDayPct = snap.seven_day_pct != null ? snap.seven_day_pct : 0;
 
-      const fiveHourCountdown = snap.five_hour_countdown || formatCountdown(snap.five_hour_resets_at);
-      const sevenDayCountdown = snap.seven_day_countdown || formatCountdown(snap.seven_day_resets_at);
+      const fiveHourCountdown =
+        snap.five_hour_countdown || formatCountdown(snap.five_hour_resets_at);
+      const sevenDayCountdown =
+        snap.seven_day_countdown || formatCountdown(snap.seven_day_resets_at);
 
       const color = getAccountColor(sub);
       const orgName = sub.organization_name || "Claude";
@@ -429,9 +483,10 @@ function renderSubscriptionCards(subs) {
       if (snap.spend_used != null) {
         const curr = snap.spend_currency || "USD";
         const atLimit = snap.spend_limit != null && snap.spend_used >= snap.spend_limit;
-        spendHtml = snap.spend_limit != null
-          ? `<span class="${atLimit ? "is-alert" : ""}">spend <strong>$${snap.spend_used.toFixed(2)}</strong> of $${snap.spend_limit.toFixed(2)} ${curr}</span>`
-          : `<span>spend <strong>$${snap.spend_used.toFixed(2)}</strong> ${curr}</span>`;
+        spendHtml =
+          snap.spend_limit != null
+            ? `<span class="${atLimit ? "is-alert" : ""}">spend <strong>$${snap.spend_used.toFixed(2)}</strong> of $${snap.spend_limit.toFixed(2)} ${curr}</span>`
+            : `<span>spend <strong>$${snap.spend_used.toFixed(2)}</strong> ${curr}</span>`;
       }
 
       const scopedPct = snap.scoped_pct != null ? snap.scoped_pct : 0;
@@ -453,7 +508,11 @@ function renderSubscriptionCards(subs) {
       const isExhausted5h = fiveHourPct >= 100 && !isUnverified;
       const tone5h = isUnverified
         ? "is-unknown"
-        : (isExhausted5h ? "is-alert" : (fiveHourPct >= 80 ? "is-warn" : ""));
+        : isExhausted5h
+          ? "is-alert"
+          : fiveHourPct >= 80
+            ? "is-warn"
+            : "";
 
       let tag5h;
       if (isIdleWindow) {
@@ -499,19 +558,23 @@ function renderSubscriptionCards(subs) {
           ${gauge({
             title: "weekly window",
             pct: sevenDayPct,
-            tone: sevenDayPct >= 90 ? "is-alert" : (sevenDayPct >= 75 ? "is-warn" : ""),
+            tone: sevenDayPct >= 90 ? "is-alert" : sevenDayPct >= 75 ? "is-warn" : "",
             unverified: false,
             fillClass: "",
             foot: `resets ${escapeHtml(sevenDayCountdown)}`,
           })}
-          ${snap.scoped_model ? gauge({
-            title: `${escapeHtml(snap.scoped_model.toLowerCase())} weekly window`,
-            pct: scopedPct,
-            tone: scopedPct >= 90 ? "is-alert" : (scopedPct >= 75 ? "is-warn" : ""),
-            unverified: false,
-            fillClass: "",
-            foot: scopedFoot,
-          }) : ""}
+          ${
+            snap.scoped_model
+              ? gauge({
+                  title: `${escapeHtml(snap.scoped_model.toLowerCase())} weekly window`,
+                  pct: scopedPct,
+                  tone: scopedPct >= 90 ? "is-alert" : scopedPct >= 75 ? "is-warn" : "",
+                  unverified: false,
+                  fillClass: "",
+                  foot: scopedFoot,
+                })
+              : ""
+          }
         </div>
 
         <div class="meter-foot">
@@ -537,27 +600,29 @@ function renderRailMeters(subs) {
     el.innerHTML = "";
     return;
   }
-  el.innerHTML = subs.map((sub) => {
-    const snap = sub.latest_snapshot || {};
-    const color = getAccountColor(sub);
-    const name = accountName(sub);
-    const bar = (label, pct, resetsAt) => {
-      const value = pct != null ? pct : 0;
-      const tone = value >= 90 ? "is-alert" : (value >= 75 ? "is-warn" : "");
-      return `
+  el.innerHTML = subs
+    .map((sub) => {
+      const snap = sub.latest_snapshot || {};
+      const color = getAccountColor(sub);
+      const name = accountName(sub);
+      const bar = (label, pct, resetsAt) => {
+        const value = pct != null ? pct : 0;
+        const tone = value >= 90 ? "is-alert" : value >= 75 ? "is-warn" : "";
+        return `
         <div class="rail-meter-bar" title="${escapeHtml(label)} · ${value.toFixed(1)}% used${resetsAt ? ` · resets ${escapeHtml(formatCountdown(resetsAt))}` : ""}">
           <span class="rail-meter-tag">${escapeHtml(label)}</span>
           <span class="rail-meter-track"><i class="${tone}" style="width:${Math.min(Math.max(value, 0), 100)}%"></i></span>
           <span class="rail-meter-pct ${tone}">${Math.round(value)}%</span>
         </div>`;
-    };
-    return `
+      };
+      return `
       <div class="rail-meter" style="--account:${color.line}" title="${escapeHtml(name)}">
         <div class="rail-meter-name">${escapeHtml(name)}</div>
         ${bar("5h", snap.five_hour_pct, snap.five_hour_resets_at)}
         ${bar("7d", snap.seven_day_pct, snap.seven_day_resets_at)}
       </div>`;
-  }).join("");
+    })
+    .join("");
 }
 
 function updateSubscriptionDropdown(subs) {
@@ -572,7 +637,8 @@ function renderAccountChips(subs) {
   if (state.selectedSubIds) {
     const known = new Set(subs.map((s) => String(s.id)));
     state.selectedSubIds = new Set(Array.from(state.selectedSubIds).filter((id) => known.has(id)));
-    if (state.selectedSubIds.size === 0 || state.selectedSubIds.size === subs.length) state.selectedSubIds = null;
+    if (state.selectedSubIds.size === 0 || state.selectedSubIds.size === subs.length)
+      state.selectedSubIds = null;
   }
 
   const allActive = !state.selectedSubIds;
@@ -610,7 +676,10 @@ function toggleAccount(id) {
     } else {
       state.selectedSubIds.add(key);
     }
-    if (state.selectedSubIds && (state.selectedSubIds.size === 0 || state.selectedSubIds.size === ids.length)) {
+    if (
+      state.selectedSubIds &&
+      (state.selectedSubIds.size === 0 || state.selectedSubIds.size === ids.length)
+    ) {
       state.selectedSubIds = null;
     }
   }
@@ -637,7 +706,8 @@ async function loadEvents(force) {
 /** Thin-stroke glyphs; emoji render inconsistently and read as decoration. */
 const EVENT_ICONS = {
   five_hour_reset: '<path d="M13.5 8a5.5 5.5 0 1 1-1.7-3.97"/><path d="M13.6 2.2v3.1h-3.1"/>',
-  seven_day_reset: '<rect x="2.2" y="3.2" width="11.6" height="10.6" rx="1"/><path d="M2.2 6.4h11.6M5.4 1.8v2.6M10.6 1.8v2.6"/>',
+  seven_day_reset:
+    '<rect x="2.2" y="3.2" width="11.6" height="10.6" rx="1"/><path d="M2.2 6.4h11.6M5.4 1.8v2.6M10.6 1.8v2.6"/>',
   quota_exhausted: '<path d="M8 2.2 14.4 13.4H1.6z"/><path d="M8 6.4v3.2M8 11.4v.6"/>',
 };
 
@@ -666,7 +736,9 @@ function renderEvents(events) {
     .map((e) => {
       const color = getAccountColor(e.subscription_id);
       const d = parseIsoDate(e.timestamp);
-      const timeStr = d ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "recently";
+      const timeStr = d
+        ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        : "recently";
       const dateStr = d ? d.toLocaleDateString([], { month: "short", day: "numeric" }) : "";
 
       return `
@@ -805,7 +877,9 @@ function renderChart(snapshots) {
   const annotations = {};
   if (state.events && state.events.length > 0) {
     const accountRank = {};
-    orderedIds.forEach((id, i) => { accountRank[id] = i; });
+    orderedIds.forEach((id, i) => {
+      accountRank[id] = i;
+    });
     state.subscriptions.forEach((sub, i) => {
       if (accountRank[String(sub.id)] == null) accountRank[String(sub.id)] = i;
     });
@@ -814,7 +888,9 @@ function renderChart(snapshots) {
       const d = parseIsoDate(ev.timestamp);
       if (!d) return;
       const color = getAccountColor(ev.subscription_id);
-      const name = accountName(subMap[ev.subscription_id] || { organization_name: ev.organization_name || ev.email });
+      const name = accountName(
+        subMap[ev.subscription_id] || { organization_name: ev.organization_name || ev.email },
+      );
       const isWeekly = ev.event_type.includes("seven");
       const isExhausted = ev.event_type === "quota_exhausted";
       const kind = isWeekly ? "weekly reset" : isExhausted ? "exhausted" : "5h reset";
@@ -903,8 +979,10 @@ function renderChart(snapshots) {
               if (!items.length) return "";
               const d = new Date(items[0].parsed.x);
               return d.toLocaleString([], {
-                month: "short", day: "numeric",
-                hour: "2-digit", minute: "2-digit",
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
               });
             },
             label: function (context) {

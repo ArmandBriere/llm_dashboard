@@ -36,6 +36,9 @@
         <string>8000</string>
         <key>LLM_DASHBOARD_LOG_DIR</key>
         <string>__HOME__/Library/Logs/llm-dashboard</string>
+        <!-- Seconds between two quota polls. Minimum 30. -->
+        <key>LLM_DASHBOARD_POLL_SECONDS</key>
+        <string>300</string>
         <!-- Set to 1 to keep the Mac awake so polling never gaps. -->
         <key>LLM_DASHBOARD_CAFFEINATE</key>
         <string>0</string>

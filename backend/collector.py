@@ -1,19 +1,22 @@
 """Background quota collector service.
 
-Periodically queries registered providers (every 5 minutes by default)
-and persists snapshots and detected events to SQLite.
+Periodically queries registered providers and persists snapshots and detected
+events to SQLite. The interval comes from ``LLM_DASHBOARD_POLL_SECONDS``
+(default 300) and a pass that only produced cached readings is retried sooner.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from backend.config import DEFAULT_POLL_SECONDS, poll_interval_seconds
 from backend.database import insert_snapshot, is_placeholder_email, upsert_subscription
-from backend.usage import scan_transcripts
 from backend.providers.base import BaseProvider
 from backend.providers.claude_code import ClaudeCodeProvider
+from backend.usage import scan_transcripts
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +28,13 @@ class QuotaCollector:
     # normal interval so a stale reading is corrected quickly.
     RETRY_SECONDS = 60
 
-    def __init__(self, interval_seconds: int = 300):
+    def __init__(self, interval_seconds: int = DEFAULT_POLL_SECONDS):
         self.interval_seconds = interval_seconds
         self.providers: list[BaseProvider] = [ClaudeCodeProvider()]
         self._running = False
         self._task: asyncio.Task | None = None
         self.last_run_time: str | None = None
+        self.next_run_time: str | None = None
         self.last_run_status: str = "idle"
         self.last_run_had_stale: bool = False
         self.last_usage_scan: dict[str, Any] | None = None
@@ -72,7 +76,9 @@ class QuotaCollector:
 
                     # Do not record completely empty snapshots
                     if five_hour_pct is None and seven_day_pct is None:
-                        logger.warning("Skipping snapshot insertion for %s due to missing quota metrics.", acc.get("email"))
+                        logger.warning(
+                            "Skipping snapshot insertion for %s due to missing quota metrics.", acc.get("email")
+                        )
                         continue
 
                     insert_snapshot(
@@ -109,9 +115,7 @@ class QuotaCollector:
             logger.exception("Transcript scan failed: %s", e)
             summary["errors"].append(f"usage scan: {e}")
 
-        from datetime import datetime, timezone
-
-        self.last_run_time = datetime.now(timezone.utc).isoformat()
+        self.last_run_time = datetime.now(UTC).isoformat()
         self.last_run_had_stale = summary["stale_accounts"] > 0
         if summary["errors"]:
             self.last_run_status = "error"
@@ -141,6 +145,7 @@ class QuotaCollector:
                     logger.error("Unexpected error in collector loop: %s", e)
             # Come back sooner when the last pass only had cached data to show.
             delay = self.RETRY_SECONDS if self.last_run_had_stale else self.interval_seconds
+            self.next_run_time = (datetime.now(UTC) + timedelta(seconds=delay)).isoformat()
             try:
                 await asyncio.sleep(delay)
             except asyncio.CancelledError:
@@ -161,10 +166,11 @@ class QuotaCollector:
         """Stop the background collector loop."""
         if self._running:
             self._running = False
+            self.next_run_time = None
             if self._task:
                 self._task.cancel()
                 self._task = None
             logger.info("Background QuotaCollector stopped.")
 
 
-collector = QuotaCollector(interval_seconds=300)
+collector = QuotaCollector(interval_seconds=poll_interval_seconds())
