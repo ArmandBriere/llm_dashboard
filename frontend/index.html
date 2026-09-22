@@ -11,11 +11,11 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
     />
-    <link rel="stylesheet" href="/static/style.css?v=7.0" />
+    <link rel="stylesheet" href="/static/style.css?v=8.0" />
 
     <!-- Applies the saved theme before first paint, so the page never flashes
        the default one. -->
-    <script src="/static/theme.js?v=7.0"></script>
+    <script src="/static/theme.js?v=8.0"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
@@ -93,6 +93,40 @@
           <span class="rail-spacer"></span>
 
           <span id="last-updated">connecting…</span>
+
+          <button
+            class="btn privacy-btn"
+            id="privacy-btn"
+            onclick="togglePrivacy()"
+            aria-pressed="false"
+            title="Emails are visible · click to blur them"
+          >
+            <svg
+              class="icon icon-eye"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              aria-hidden="true"
+            >
+              <path d="M1.5 8s2.4-4.3 6.5-4.3S14.5 8 14.5 8s-2.4 4.3-6.5 4.3S1.5 8 1.5 8Z" />
+              <circle cx="8" cy="8" r="2.1" />
+            </svg>
+            <svg
+              class="icon icon-eye-off"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              aria-hidden="true"
+            >
+              <path d="M2.6 5.2C1.9 6.2 1.5 8 1.5 8s2.4 4.3 6.5 4.3c1.2 0 2.2-.3 3.1-.8" />
+              <path d="M6.2 3.9c.6-.1 1.2-.2 1.8-.2 4.1 0 6.5 4.3 6.5 4.3s-.6 1.1-1.7 2.2" />
+              <path d="M6.5 6.5a2.1 2.1 0 0 0 3 3" />
+              <path d="M2 2l12 12" />
+            </svg>
+            <span id="privacy-label">emails shown</span>
+          </button>
 
           <div class="theme-picker" id="theme-picker">
             <button
@@ -396,8 +430,8 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=7.0"></script>
-    <script src="/static/usage.js?v=7.0"></script>
-    <script src="/static/nav.js?v=7.0"></script>
+    <script src="/static/app.js?v=8.0"></script>
+    <script src="/static/usage.js?v=8.0"></script>
+    <script src="/static/nav.js?v=8.0"></script>
   </body>
 </html>

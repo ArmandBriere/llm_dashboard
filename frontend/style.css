@@ -459,6 +459,36 @@ button {
   position: relative;
 }
 
+/* Privacy mode. Emails are blurred rather than removed so the layout, and the
+   hint that a real account sits behind the name, are unchanged. The attribute
+   is set on <html> by nav.js. */
+.sensitive {
+  transition: filter 160ms ease;
+}
+
+[data-privacy="on"] .sensitive {
+  filter: blur(4px);
+  user-select: none;
+  pointer-events: none;
+}
+
+.privacy-btn .icon-eye-off {
+  display: none;
+}
+
+[data-privacy="on"] .privacy-btn .icon-eye {
+  display: none;
+}
+
+[data-privacy="on"] .privacy-btn .icon-eye-off {
+  display: inline-flex;
+}
+
+.privacy-btn[aria-pressed="true"] {
+  color: var(--signal);
+  border-color: var(--signal);
+}
+
 .theme-btn .theme-chip {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -200,6 +200,7 @@ function initNav() {
   if (routeFromHash() !== id) location.replace(`#/${id}`);
   window.addEventListener("hashchange", onHashChange);
   restoreSidenavCollapsed();
+  restorePrivacy();
   return showView(id);
 }
 
@@ -238,6 +239,51 @@ function restoreSidenavCollapsed() {
   } catch {
     /* non-fatal */
   }
+}
+
+// ---------- privacy mode ----------
+
+// Blurs every account email (.sensitive in app.js) so the console can be
+// screenshotted or screen-shared as-is. The state lives as an attribute on
+// <html> so style.css scopes the blur and no render path has to know about it.
+const PRIVACY_KEY = "llm-dashboard.privacy.v1";
+
+function privacyOn() {
+  return document.documentElement.getAttribute("data-privacy") === "on";
+}
+
+function setPrivacy(on, { persist = true } = {}) {
+  document.documentElement.setAttribute("data-privacy", on ? "on" : "off");
+  const btn = document.getElementById("privacy-btn");
+  if (btn) {
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    btn.title = on
+      ? "Emails are blurred · click to show them"
+      : "Emails are visible · click to blur them";
+  }
+  const label = document.getElementById("privacy-label");
+  if (label) label.textContent = on ? "emails hidden" : "emails shown";
+  if (persist) {
+    try {
+      localStorage.setItem(PRIVACY_KEY, on ? "1" : "0");
+    } catch {
+      /* non-fatal */
+    }
+  }
+}
+
+function togglePrivacy() {
+  setPrivacy(!privacyOn());
+}
+
+function restorePrivacy() {
+  let saved = null;
+  try {
+    saved = localStorage.getItem(PRIVACY_KEY);
+  } catch {
+    /* non-fatal */
+  }
+  setPrivacy(saved === "1", { persist: false });
 }
 
 // On narrow screens the sidenav overlays the content as a drawer instead.

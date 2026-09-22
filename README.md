@@ -62,7 +62,7 @@ skill you load **injects its instruction text into the context of every
 subsequent turn**, and you pay for that on every one of them. A dashboard that
 only shows models cannot see this at all.
 
-![Skills: 529 invocations of 33 skills, 1.3M tokens of injected context, 13 that failed to load](docs/screenshots/skills.png)
+![Skills: 541 invocations of 33 skills, 1.4M tokens of injected context, 13 that failed to load](docs/screenshots/skills.png)
 
 Three numbers, deliberately kept separate because they mean different things:
 
@@ -94,7 +94,7 @@ leaderboard splitting tool calls into builtin, MCP server, skill and subagent.
 
 ![Activity over time: daily cost stacked by model, and a day-by-hour heatmap](docs/screenshots/activity.png)
 
-![Tools: 52,765 calls split across builtin, MCP, skill and subagent, with a per-tool leaderboard](docs/screenshots/tools.png)
+![Tools: 53,903 calls split across builtin, MCP, skill and subagent, with a per-tool leaderboard](docs/screenshots/tools.png)
 
 _Screenshots are one developer's real machine over about two months: 1,706
 transcripts, 1,067 sessions, 8.27B tokens._
@@ -110,6 +110,8 @@ transcripts, 1,067 sessions, 8.27B tokens._
   and which skills, plugins and tools drove the work.
 - **Eleven views** behind a collapsible sidebar, each with its own URL, and
   four dark themes.
+- **Privacy mode** blurs every account email with one click, so the console can
+  be screenshotted or screen-shared as-is.
 - Runs as a **24/7 background service** on macOS so the history has no gaps
   while the Mac is awake.
 
