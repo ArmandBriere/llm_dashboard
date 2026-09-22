@@ -119,6 +119,19 @@ function accountName(sub) {
   return (sub && (sub.organization_name || sub.email)) || "Claude";
 }
 
+// Emails identify the person behind a profile, so every place that prints one
+// wraps it in .sensitive; privacy mode (nav.js) blurs that class via a root
+// attribute. Organisation names are not personal and stay in the clear.
+function sensitiveHtml(text) {
+  return `<span class="sensitive">${escapeHtml(text)}</span>`;
+}
+
+function accountNameHtml(sub) {
+  if (sub && sub.organization_name) return escapeHtml(sub.organization_name);
+  if (sub && sub.email) return sensitiveHtml(sub.email);
+  return escapeHtml(accountName(sub));
+}
+
 // Comma-separated ids for the API, or null when every account is selected.
 function selectedIdsParam() {
   if (!state.selectedSubIds || state.selectedSubIds.size === 0) return null;
@@ -541,7 +554,7 @@ function renderSubscriptionCards(subs) {
           <span class="meter-flag" aria-hidden="true"></span>
           <div class="meter-id">
             <div class="meter-name">${escapeHtml(orgName)}</div>
-            <div class="meter-email">${escapeHtml(sub.email)}</div>
+            <div class="meter-email">${sensitiveHtml(sub.email)}</div>
           </div>
           <div class="meter-aside">${tag5h}</div>
         </div>
@@ -617,7 +630,7 @@ function renderRailMeters(subs) {
       };
       return `
       <div class="rail-meter" style="--account:${color.line}" title="${escapeHtml(name)}">
-        <div class="rail-meter-name">${escapeHtml(name)}</div>
+        <div class="rail-meter-name">${accountNameHtml(sub)}</div>
         ${bar("5h", snap.five_hour_pct, snap.five_hour_resets_at)}
         ${bar("7d", snap.seven_day_pct, snap.seven_day_resets_at)}
       </div>`;
@@ -652,7 +665,7 @@ function renderAccountChips(subs) {
                   style="--account: ${color.line}; --account-tint: ${color.tint}; --account-border: ${color.border};"
                   onclick="toggleAccount('${sub.id}')" aria-pressed="${on}"
                   title="Click to show only this account; click again to add or remove it">
-                  <span class="chip-swatch"></span>${escapeHtml(accountName(sub))}
+                  <span class="chip-swatch"></span>${accountNameHtml(sub)}
                 </button>`;
       })
       .join("");
@@ -747,7 +760,7 @@ function renderEvents(events) {
         ${eventIcon(e.event_type)}
         <div class="event-body">
           <div class="event-desc">${escapeHtml(e.description)}</div>
-          <span class="event-account"><span class="chip-swatch"></span>${escapeHtml(e.organization_name || e.email)}</span>
+          <span class="event-account"><span class="chip-swatch"></span>${e.organization_name ? escapeHtml(e.organization_name) : sensitiveHtml(e.email)}</span>
         </div>
         <div class="event-time">${dateStr} ${timeStr}</div>
       </div>

@@ -292,7 +292,7 @@ function renderUsageStats(summary) {
     .map((a) => {
       const sub = subById(a.subscription_id);
       const color = getAccountColor(sub || a.subscription_id);
-      return `<span class="stat-split" style="--account:${color.line}">${escapeHtml(sub ? accountName(sub) : a.account_key)} ${fmtWeight(weightOf(a))}</span>`;
+      return `<span class="stat-split" style="--account:${color.line}">${sub ? accountNameHtml(sub) : escapeHtml(a.account_key)} ${fmtWeight(weightOf(a))}</span>`;
     })
     .join("");
   const outputShare = summary.total_tokens
