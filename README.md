@@ -40,7 +40,8 @@ reads."
 ### Never wonder where the window went
 
 Solid lines are the 5-hour window, dashed the weekly one. Every reset and every
-100% wall is marked, so a spike has a timestamp you can go look up.
+100% wall is marked, so a spike has a timestamp you can go look up. Drag or
+swipe the chart sideways to follow a session past midnight; pinch to zoom.
 
 ![Burn-down for a single day, climbing to 90% before the 5-hour window resets](docs/screenshots/burndown.png)
 

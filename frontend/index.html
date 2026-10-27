@@ -11,7 +11,7 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
     />
-    <link rel="stylesheet" href="/static/style.css?v=8.0" />
+    <link rel="stylesheet" href="/static/style.css?v=8.1" />
 
     <!-- Applies the saved theme before first paint, so the page never flashes
        the default one. -->
@@ -299,9 +299,36 @@
             </div>
             <p class="view-note">
               Solid lines track the 5-hour window, dashed lines the weekly one. Vertical markers
-              show where a window reset or ran out.
+              show where a window reset or ran out. The chart opens on the date and hours of the
+              filter bar; drag or swipe it sideways to scroll past midnight.
             </p>
-            <div class="chart-frame">
+            <div class="chart-toolbar">
+              <div class="segmented" role="group" aria-label="Scroll the chart">
+                <button onclick="panChart(-0.5)" title="Earlier (←)">← Earlier</button>
+                <button onclick="panChart(0.5)" title="Later (→)">Later →</button>
+              </div>
+              <div class="segmented" role="group" aria-label="Zoom the chart">
+                <button onclick="zoomChart(1.5)" title="Zoom out (−)" aria-label="Zoom out">
+                  −
+                </button>
+                <button onclick="zoomChart(1 / 1.5)" title="Zoom in (+)" aria-label="Zoom in">
+                  +
+                </button>
+              </div>
+              <div class="segmented">
+                <button id="chart-reset" onclick="resetChartView()" disabled>
+                  Back to filter window
+                </button>
+              </div>
+              <span class="chart-hint"
+                >drag or swipe to scroll · pinch to zoom · double-click to reset</span
+              >
+            </div>
+            <div
+              class="chart-frame chart-pannable"
+              tabindex="0"
+              aria-label="Quota chart. Arrow keys scroll, plus and minus zoom, 0 resets."
+            >
               <canvas id="quotaChart"></canvas>
             </div>
           </section>
@@ -430,7 +457,7 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=8.0"></script>
+    <script src="/static/app.js?v=8.1"></script>
     <script src="/static/usage.js?v=8.0"></script>
     <script src="/static/nav.js?v=8.0"></script>
   </body>

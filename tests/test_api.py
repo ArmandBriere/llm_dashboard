@@ -115,6 +115,13 @@ def test_filters_parse_subscription_ids(client):
     assert client.get("/api/snapshots?start_hour=25").status_code == 422
 
 
+def test_snapshots_accept_a_time_range(client):
+    assert len(client.get("/api/snapshots?since=2000-01-01T00:00:00Z&limit=5000").json()) == 2
+    assert client.get("/api/snapshots?since=2999-01-01T00:00:00").json() == []
+    assert client.get("/api/events?until=2000-01-01T00:00:00Z").json() == []
+    assert client.get("/api/snapshots?since=yesterday").status_code == 422
+
+
 def test_usage_endpoints_answer_on_an_empty_index(client):
     assert client.get("/api/usage/summary").status_code == 200
     assert client.get("/api/usage/models").json() == []

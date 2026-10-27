@@ -1411,6 +1411,37 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   height: 260px;
 }
 
+.chart-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.segmented button:disabled {
+  color: var(--ink-3);
+  opacity: 0.5;
+  cursor: default;
+  background: none;
+}
+
+.chart-hint {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+/* Horizontal drags belong to the chart; vertical ones still scroll the page on touch. */
+.chart-pannable canvas {
+  cursor: grab;
+  touch-action: pan-y;
+}
+.chart-pannable.is-panning canvas {
+  cursor: grabbing;
+}
+
 /* ==========================================================================
    Event log
    ========================================================================== */
