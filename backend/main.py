@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -77,14 +78,22 @@ def api_subscriptions() -> list[dict[str, Any]]:
     return get_subscriptions()
 
 
+# An absolute time range, for the burn-down chart's viewport, which can straddle midnight.
+RangeSince = Query(None, description="ISO-8601 instant, inclusive; naive means UTC")
+RangeUntil = Query(None, description="ISO-8601 instant, exclusive; naive means UTC")
+
+
 @app.get("/api/snapshots")
 def api_snapshots(
     subscription_ids: str | None = Query(None, description="Comma-separated subscription IDs"),
     date: str | None = Query(None, description="Date in YYYY-MM-DD format"),
     start_hour: int | None = Query(None, ge=0, le=23, description="Starting hour of day (0-23)"),
     end_hour: int | None = Query(None, ge=0, le=23, description="Ending hour of day (0-23)"),
+    since: datetime | None = RangeSince,
+    until: datetime | None = RangeUntil,
+    limit: int = Query(2000, ge=1, le=20000),
 ) -> list[dict[str, Any]]:
-    """Query time-series quota snapshots with flexible date and hour window filtering."""
+    """Query time-series quota snapshots with flexible date, hour window and time range filtering."""
     sub_id_list = None
     if subscription_ids:
         sub_id_list = [int(s.strip()) for s in subscription_ids.split(",") if s.strip().isdigit()]
@@ -94,6 +103,9 @@ def api_snapshots(
         date_str=date,
         start_hour=start_hour,
         end_hour=end_hour,
+        since=_iso_utc(since),
+        until=_iso_utc(until),
+        limit=limit,
     )
 
 
@@ -101,6 +113,8 @@ def api_snapshots(
 def api_events(
     subscription_ids: str | None = Query(None, description="Comma-separated subscription IDs"),
     date: str | None = Query(None, description="Date in YYYY-MM-DD format"),
+    since: datetime | None = RangeSince,
+    until: datetime | None = RangeUntil,
     limit: int = Query(100, ge=1, le=500),
 ) -> list[dict[str, Any]]:
     """Retrieve detected quota reset and refresh events."""
@@ -108,7 +122,18 @@ def api_events(
     if subscription_ids:
         sub_id_list = [int(s.strip()) for s in subscription_ids.split(",") if s.strip().isdigit()]
 
-    return get_events(subscription_ids=sub_id_list, date_str=date, limit=limit)
+    return get_events(
+        subscription_ids=sub_id_list, date_str=date, since=_iso_utc(since), until=_iso_utc(until), limit=limit
+    )
+
+
+def _iso_utc(value: datetime | None) -> str | None:
+    # A naive instant is taken as UTC, matching how snapshots are stored.
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
 
 
 @app.post("/api/refresh")

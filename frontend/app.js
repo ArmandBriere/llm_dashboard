@@ -251,25 +251,32 @@ function renderWindowLabel() {
   const el = document.getElementById("chart-range-label");
   if (!el) return;
 
-  const bounds = getWindowBounds();
-  if (!bounds) {
+  const range = chartView.range || homeChartRange();
+  if (!range) {
     el.textContent = "all recorded history";
     return;
   }
 
-  const dateLabel = bounds.min.toLocaleDateString([], {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
+  const min = new Date(range.min);
+  const max = new Date(range.max);
+  const dayOpts = { weekday: "short", month: "short", day: "numeric" };
   const timeOpts = { hour: "numeric", minute: "2-digit" };
-  const isFullDay = state.startHour === 0 && state.endHour === 23;
-  el.textContent = isFullDay
-    ? `${dateLabel} · full 24 hours`
-    : `${dateLabel} · ${bounds.min.toLocaleTimeString([], timeOpts)} – ${bounds.max.toLocaleTimeString([], timeOpts)}`;
+  const isFullDay = !chartView.range && state.startHour === 0 && state.endHour === 23;
+  if (isFullDay) {
+    el.textContent = `${min.toLocaleDateString([], dayOpts)} · full 24 hours`;
+    return;
+  }
+  // A panned viewport often straddles midnight, so name both days when it does.
+  // The window closes at midnight exactly on a full day, which is still that day.
+  const lastMoment = new Date(range.max - 1);
+  el.textContent =
+    min.toDateString() === lastMoment.toDateString()
+      ? `${min.toLocaleDateString([], dayOpts)} · ${min.toLocaleTimeString([], timeOpts)} – ${max.toLocaleTimeString([], timeOpts)}`
+      : `${min.toLocaleDateString([], dayOpts)} ${min.toLocaleTimeString([], timeOpts)} – ${max.toLocaleDateString([], dayOpts)} ${max.toLocaleTimeString([], timeOpts)}`;
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  initChartInteractions();
   initDashboard();
 });
 
@@ -769,33 +776,226 @@ function renderEvents(events) {
     .join("");
 }
 
+/**
+ * The burn-down chart is a viewport onto the whole snapshot history rather than
+ * a picture of the filter window. The date and hour filters only decide where
+ * the viewport starts (its "home"); from there it can be dragged, swiped and
+ * pinched across midnight, and the neighbouring hours load as it moves.
+ */
+const HOUR_MS = 60 * 60 * 1000;
+const CHART_MIN_SPAN_MS = HOUR_MS;
+const CHART_MAX_SPAN_MS = 7 * 24 * HOUR_MS;
+
+const chartView = {
+  // { min, max } in ms once the user has moved off home; null means home.
+  range: null,
+  // The span the loaded snapshots cover; null when everything is loaded (All time).
+  loaded: null,
+  events: [],
+  fetchToken: 0,
+  fetching: false,
+};
+
+function homeChartRange() {
+  const bounds = getWindowBounds();
+  return bounds ? { min: bounds.min.getTime(), max: bounds.max.getTime() } : null;
+}
+
+// What the chart shows right now. All time has no home, so it asks the drawn axis.
+function currentChartRange() {
+  if (chartView.range) return chartView.range;
+  const home = homeChartRange();
+  if (home) return home;
+  const x = state.chart && state.chart.scales.x;
+  return x ? { min: x.min, max: x.max } : null;
+}
+
+function resetChartView() {
+  if (!chartView.range) return;
+  chartView.range = null;
+  loadSnapshotsAndRenderChart(false);
+}
+
 async function loadSnapshotsAndRenderChart(force) {
-  let url = "/api/snapshots?";
-  const params = [];
-
   const idsParam = selectedIdsParam();
-  if (idsParam) {
-    params.push(`subscription_ids=${idsParam}`);
+  const ids = idsParam ? `&subscription_ids=${idsParam}` : "";
+  const view = chartView.range || homeChartRange();
+
+  let snapshotsUrl;
+  let eventsUrl;
+  let loaded = null;
+  if (view) {
+    // Load one viewport-width either side so a pan has data to reveal before
+    // the next fetch lands. Edges snap to the hour so nearby pans share URLs,
+    // and therefore the cache.
+    const span = view.max - view.min;
+    const since = Math.floor((view.min - span) / HOUR_MS) * HOUR_MS;
+    const until = Math.ceil((view.max + span) / HOUR_MS) * HOUR_MS;
+    const range = `since=${new Date(since).toISOString()}&until=${new Date(until).toISOString()}`;
+    snapshotsUrl = `/api/snapshots?${range}&limit=20000${ids}`;
+    eventsUrl = `/api/events?${range}&limit=500${ids}`;
+    loaded = { min: since, max: until };
+  } else {
+    snapshotsUrl = `/api/snapshots?limit=20000${ids}`;
+    eventsUrl = `/api/events?limit=500${ids}`;
   }
 
-  const dateStr = getSelectedDateString();
-  if (dateStr) {
-    params.push(`date=${dateStr}`);
+  // The reset markers are drawn from the events, so the chart cannot be
+  // painted before they land — the two fetches go out together. A pan can
+  // start a second load before the first returns; only the latest one paints.
+  const token = ++chartView.fetchToken;
+  chartView.fetching = true;
+  try {
+    const [snapshots, events] = await Promise.all([
+      cachedJson(snapshotsUrl, force),
+      cachedJson(eventsUrl, force),
+    ]);
+    if (token !== chartView.fetchToken) return;
+    chartView.loaded = loaded;
+    chartView.events = events;
+    renderChart(snapshots);
+    renderWindowLabel();
+  } finally {
+    if (token === chartView.fetchToken) chartView.fetching = false;
+  }
+  // The viewport may have kept moving while that request was out.
+  ensureChartData();
+}
+
+function ensureChartData() {
+  const r = chartView.range;
+  const l = chartView.loaded;
+  if (!r || !l || chartView.fetching) return;
+  if (r.min >= l.min && r.max <= l.max) return;
+  loadSnapshotsAndRenderChart(false).catch((err) => console.error("Chart load failed:", err));
+}
+
+// Move the viewport and redraw in place: no refetch unless it leaves the loaded span.
+function setChartRange(min, max) {
+  if (!state.chart) return;
+  let span = Math.min(CHART_MAX_SPAN_MS, Math.max(CHART_MIN_SPAN_MS, max - min));
+  const center = (min + max) / 2;
+  min = center - span / 2;
+  max = center + span / 2;
+
+  // Nothing is recorded in the future: stop at the end of today (or of the
+  // home window, when it reaches further).
+  const endOfToday = new Date();
+  endOfToday.setHours(24, 0, 0, 0);
+  const home = homeChartRange();
+  const limit = Math.max(endOfToday.getTime(), home ? home.max : 0);
+  if (max > limit) {
+    max = limit;
+    min = limit - span;
   }
 
-  if (state.startHour !== null) {
-    params.push(`start_hour=${state.startHour}`);
-  }
-  if (state.endHour !== null) {
-    params.push(`end_hour=${state.endHour}`);
-  }
+  chartView.range = { min, max };
+  const x = state.chart.options.scales.x;
+  x.min = min;
+  x.max = max;
+  x.time.unit = pickTimeUnit(span);
+  state.chart.update("none");
+  renderWindowLabel();
+  syncChartToolbar();
+  ensureChartData();
+}
 
-  url += params.join("&");
+function panChart(fraction) {
+  const r = currentChartRange();
+  if (!r) return;
+  const delta = (r.max - r.min) * fraction;
+  setChartRange(r.min + delta, r.max + delta);
+}
 
-  // The reset markers are drawn from state.events, so the chart cannot be
-  // painted before they land — the two fetches go out together.
-  const [snapshots] = await Promise.all([cachedJson(url, force), loadEvents(force)]);
-  renderChart(snapshots);
+// factor > 1 zooms out. The anchor (ms) stays under the cursor.
+function zoomChart(factor, anchor) {
+  const r = currentChartRange();
+  if (!r) return;
+  const at = anchor != null ? anchor : (r.min + r.max) / 2;
+  const span = Math.min(CHART_MAX_SPAN_MS, Math.max(CHART_MIN_SPAN_MS, (r.max - r.min) * factor));
+  const ratio = (at - r.min) / (r.max - r.min);
+  setChartRange(at - span * ratio, at + span * (1 - ratio));
+}
+
+function syncChartToolbar() {
+  const reset = document.getElementById("chart-reset");
+  if (reset) reset.disabled = !chartView.range;
+}
+
+/**
+ * Drag pans, a horizontal trackpad swipe (or shift + wheel) pans, a pinch (or
+ * ctrl/⌘ + wheel) zooms around the cursor, double-click goes home. A plain
+ * vertical wheel is left alone so the page still scrolls over the chart.
+ */
+function initChartInteractions() {
+  const canvas = document.getElementById("quotaChart");
+  const frame = canvas && canvas.closest(".chart-frame");
+  if (!canvas || !frame) return;
+
+  let drag = null;
+  let pending = null;
+  const msPerPixel = (r) => (r.max - r.min) / Math.max(1, state.chart.scales.x.width);
+
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !state.chart) return;
+    const range = currentChartRange();
+    if (!range) return;
+    drag = { x: e.clientX, range, perPx: msPerPixel(range) };
+    canvas.setPointerCapture(e.pointerId);
+    frame.classList.add("is-panning");
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const shift = (drag.x - e.clientX) * drag.perPx;
+    // Pointer events outpace the display; draw at most once per frame.
+    if (!pending) {
+      requestAnimationFrame(() => {
+        const p = pending;
+        pending = null;
+        if (p) setChartRange(p.min, p.max);
+      });
+    }
+    pending = { min: drag.range.min + shift, max: drag.range.max + shift };
+  });
+  const endDrag = () => {
+    drag = null;
+    frame.classList.remove("is-panning");
+  };
+  canvas.addEventListener("pointerup", endDrag);
+  canvas.addEventListener("pointercancel", endDrag);
+
+  canvas.addEventListener(
+    "wheel",
+    (e) => {
+      if (!state.chart) return;
+      const r = currentChartRange();
+      if (!r) return;
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const anchor = state.chart.scales.x.getValueForPixel(e.offsetX);
+        zoomChart(Math.exp(e.deltaY * 0.01), anchor);
+      } else if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey) {
+        e.preventDefault();
+        const dx = e.deltaX || e.deltaY;
+        const shift = dx * msPerPixel(r);
+        setChartRange(r.min + shift, r.max + shift);
+      }
+    },
+    { passive: false },
+  );
+
+  canvas.addEventListener("dblclick", resetChartView);
+
+  frame.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 1 : 0.25;
+    if (e.key === "ArrowLeft") panChart(-step);
+    else if (e.key === "ArrowRight") panChart(step);
+    else if (e.key === "+" || e.key === "=") zoomChart(1 / 1.5);
+    else if (e.key === "-") zoomChart(1.5);
+    else if (e.key === "0" || e.key === "Home") resetChartView();
+    else return;
+    e.preventDefault();
+  });
 }
 
 function renderChart(snapshots) {
@@ -888,7 +1088,8 @@ function renderChart(snapshots) {
   // One marker per detected event, in the owning account's hue. Labels are
   // staggered per account so simultaneous resets on two accounts both stay legible.
   const annotations = {};
-  if (state.events && state.events.length > 0) {
+  const chartEvents = chartView.events || [];
+  if (chartEvents.length > 0) {
     const accountRank = {};
     orderedIds.forEach((id, i) => {
       accountRank[id] = i;
@@ -897,7 +1098,7 @@ function renderChart(snapshots) {
       if (accountRank[String(sub.id)] == null) accountRank[String(sub.id)] = i;
     });
 
-    state.events.forEach((ev, idx) => {
+    chartEvents.forEach((ev, idx) => {
       const d = parseIsoDate(ev.timestamp);
       if (!d) return;
       const color = getAccountColor(ev.subscription_id);
@@ -933,17 +1134,13 @@ function renderChart(snapshots) {
     });
   }
 
-  if (state.chart) {
-    state.chart.destroy();
-  }
-
-  // The axis spans the selected window, not just the range the data happens to
-  // cover — otherwise every timeframe renders identically when all the samples
-  // sit in one short burst. "All Time" has no window, so it fits the data.
-  const bounds = getWindowBounds();
+  // The axis spans the viewport, not just the range the data happens to cover —
+  // otherwise every timeframe renders identically when all the samples sit in
+  // one short burst. All time with no pan yet has no viewport, so it fits the data.
+  const view = chartView.range || homeChartRange();
   let timeUnit;
-  if (bounds) {
-    timeUnit = pickTimeUnit(bounds.max.getTime() - bounds.min.getTime());
+  if (view) {
+    timeUnit = pickTimeUnit(view.max - view.min);
   } else if (snapshots.length >= 2) {
     const first = parseIsoDate(snapshots[0].timestamp);
     const last = parseIsoDate(snapshots[snapshots.length - 1].timestamp);
@@ -952,7 +1149,7 @@ function renderChart(snapshots) {
     timeUnit = "minute";
   }
 
-  state.chart = new Chart(ctx, {
+  const config = {
     type: "line",
     data: {
       datasets: datasets.length > 0 ? datasets : [{ label: "No Activity", data: [] }],
@@ -1012,8 +1209,8 @@ function renderChart(snapshots) {
       scales: {
         x: {
           type: "time",
-          min: bounds ? bounds.min.getTime() : undefined,
-          max: bounds ? bounds.max.getTime() : undefined,
+          min: view ? view.min : undefined,
+          max: view ? view.max : undefined,
           time: {
             unit: timeUnit,
             displayFormats: {
@@ -1024,14 +1221,17 @@ function renderChart(snapshots) {
             tooltipFormat: "MMM d, hh:mm a",
           },
           border: { color: t.rule },
+          // Midnight is a major tick labelled with the date and drawn a shade
+          // stronger, so a viewport that spans the night says where one day ends.
           grid: {
-            color: t.ruleFaint,
+            color: (c) => (c.tick && c.tick.major ? t.rule : t.ruleFaint),
           },
           ticks: {
-            color: t.ink3,
+            color: (c) => (c.tick && c.tick.major ? t.ink2 : t.ink3),
             maxRotation: 0,
             autoSkip: true,
             maxTicksLimit: 14,
+            major: { enabled: true },
             font: { size: 10, family: t.fontMono },
           },
         },
@@ -1058,7 +1258,19 @@ function renderChart(snapshots) {
         },
       },
     },
-  });
+  };
+
+  // Redraw in place when the chart already exists: a pan that pulls in new
+  // hours, or the 30 s poll, should not flash a fresh chart or break a drag.
+  if (state.chart && state.chart.canvas === ctx) {
+    state.chart.data = config.data;
+    state.chart.options = config.options;
+    state.chart.update("none");
+  } else {
+    if (state.chart) state.chart.destroy();
+    state.chart = new Chart(ctx, config);
+  }
+  syncChartToolbar();
 }
 
 function clampHour(rawValue, fallback) {
@@ -1101,8 +1313,10 @@ function applyFilters() {
   if (typeof syncFilterBar === "function") syncFilterBar();
   saveViewState();
 
-  // Every cached payload was scoped to the old filters, so none of it survives.
+  // Every cached payload was scoped to the old filters, so none of it survives,
+  // and a new window sends the burn-down chart back to it.
   invalidateCache();
+  chartView.range = null;
   refreshCurrentView({ force: true });
 }
 

@@ -497,15 +497,33 @@ def insert_snapshot(
     return snap_id
 
 
+def _add_range(conditions: list[str], params: list[Any], column: str, since: str | None, until: str | None) -> None:
+    # Stored timestamps carry a +00:00 suffix and callers may send Z or another offset, so both
+    # sides go through datetime() to compare as UTC instants rather than as strings.
+    if since:
+        conditions.append(f"datetime({column}) >= datetime(?)")
+        params.append(since)
+    if until:
+        conditions.append(f"datetime({column}) < datetime(?)")
+        params.append(until)
+
+
 def get_snapshots(
     subscription_ids: list[int] | None = None,
     date_str: str | None = None,
     start_hour: int | None = None,
     end_hour: int | None = None,
+    since: str | None = None,
+    until: str | None = None,
     limit: int = 2000,
     db_path: Path | str | None = None,
 ) -> list[dict[str, Any]]:
-    """Query time-series quota snapshots with flexible filtering (date, hour window)."""
+    """Query time-series quota snapshots with flexible filtering (date, hour window, time range).
+
+    ``since``/``until`` are absolute ISO-8601 instants (inclusive / exclusive). They exist for the
+    pannable burn-down chart, whose viewport routinely straddles midnight, which a local ``date``
+    cannot express.
+    """
     with get_db(db_path) as conn:
         conditions: list[str] = []
         params: list[Any] = []
@@ -528,6 +546,8 @@ def get_snapshots(
             conditions.append("CAST(strftime('%H', datetime(timestamp, 'localtime')) AS INTEGER) <= ?")
             params.append(int(end_hour))
 
+        _add_range(conditions, params, "timestamp", since, until)
+
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         query = f"""
             SELECT * FROM quota_snapshots
@@ -543,10 +563,12 @@ def get_snapshots(
 def get_events(
     subscription_ids: list[int] | None = None,
     date_str: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
     limit: int = 100,
     db_path: Path | str | None = None,
 ) -> list[dict[str, Any]]:
-    """Retrieve recorded quota reset and threshold events."""
+    """Retrieve recorded quota reset and threshold events, newest first."""
     with get_db(db_path) as conn:
         conditions: list[str] = []
         params: list[Any] = []
@@ -559,6 +581,8 @@ def get_events(
         if date_str:
             conditions.append("strftime('%Y-%m-%d', datetime(e.timestamp, 'localtime')) = ?")
             params.append(date_str)
+
+        _add_range(conditions, params, "e.timestamp", since, until)
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         query = f"""

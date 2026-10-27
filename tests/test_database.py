@@ -157,6 +157,37 @@ def test_snapshot_filtering(temp_db):
     assert len(all_day) == 3
 
 
+def test_time_range_crosses_midnight(temp_db):
+    sub_id = upsert_subscription(email="night@vooban.com", db_path=temp_db)["id"]
+
+    # Readings at 22:00 UTC on one day and 02:00 and 09:00 UTC the next. A night
+    # viewport is a UTC range, so no local-day filter can return the first two.
+    for ts, pct in (
+        ("2026-09-08T22:00:00+00:00", 30.0),
+        ("2026-09-09T02:00:00+00:00", 90.0),
+        ("2026-09-09T09:00:00+00:00", 5.0),
+    ):
+        insert_snapshot(
+            subscription_id=sub_id,
+            five_hour_pct=pct,
+            five_hour_resets_at=None,
+            seven_day_pct=10.0,
+            seven_day_resets_at=None,
+            timestamp=ts,
+            db_path=temp_db,
+        )
+
+    night = get_snapshots(since="2026-09-08T20:00:00Z", until="2026-09-09T08:00:00+00:00", db_path=temp_db)
+    assert [s["five_hour_pct"] for s in night] == [30.0, 90.0]
+    # The offset is honoured: 23:00 at -01:00 is midnight UTC.
+    late = get_snapshots(since="2026-09-08T23:00:00-01:00", db_path=temp_db)
+    assert [s["five_hour_pct"] for s in late] == [90.0, 5.0]
+
+    # The 90 -> 5 drop is a 5-hour reset event at 09:00; `until` is exclusive.
+    assert len(get_events(since="2026-09-09T08:00:00Z", db_path=temp_db)) == 1
+    assert get_events(until="2026-09-09T09:00:00Z", db_path=temp_db) == []
+
+
 def test_small_drop_with_new_window_is_reset(temp_db):
     """A lightly used window (13% -> 0%) still counts as a reset when the deadline moves."""
     sub = upsert_subscription(email="small@example.com", organization_name="Small", db_path=temp_db)

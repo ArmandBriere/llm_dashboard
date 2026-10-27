@@ -8,23 +8,24 @@ JSON. There is no authentication: the server is meant to listen on loopback.
 The quota and usage endpoints share one filter vocabulary, which is what lets
 the frontend keep a single filter bar for every view.
 
-| Parameter          | Type         | Meaning                                                              |
-| ------------------ | ------------ | -------------------------------------------------------------------- |
-| `subscription_ids` | `1,2`        | Comma-separated subscription ids. Non-numeric entries are ignored.   |
-| `date`             | `YYYY-MM-DD` | One local day. Omit for all time.                                    |
-| `start_hour`       | `0`–`23`     | First hour of day to include (local time).                           |
-| `end_hour`         | `0`–`23`     | Last hour of day to include (local time).                            |
-| `limit`            | integer      | Where a list can be long; each endpoint has its own default and cap. |
+| Parameter          | Type         | Meaning                                                                                            |
+| ------------------ | ------------ | -------------------------------------------------------------------------------------------------- |
+| `subscription_ids` | `1,2`        | Comma-separated subscription ids. Non-numeric entries are ignored.                                 |
+| `date`             | `YYYY-MM-DD` | One local day. Omit for all time.                                                                  |
+| `start_hour`       | `0`–`23`     | First hour of day to include (local time).                                                         |
+| `end_hour`         | `0`–`23`     | Last hour of day to include (local time).                                                          |
+| `since`, `until`   | ISO-8601     | Absolute instants, `since` inclusive and `until` exclusive; naive means UTC. Quota endpoints only. |
+| `limit`            | integer      | Where a list can be long; each endpoint has its own default and cap.                               |
 
 ## Quota
 
-| Method | Path                 | Returns                                                                                                                                             |
-| ------ | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`  | `/api/subscriptions` | Every account seen, with its latest snapshot (`five_hour_pct`, `seven_day_pct`, reset times, spend, `is_stale`).                                    |
-| `GET`  | `/api/snapshots`     | Time series of snapshots. Filters: `subscription_ids`, `date`, `start_hour`, `end_hour`.                                                            |
-| `GET`  | `/api/events`        | Detected `five_hour_reset`, `seven_day_reset` and `exhausted` events. Filters: `subscription_ids`, `date`, `limit` (default 100, max 500).          |
-| `POST` | `/api/refresh`       | Runs one collection pass now. Returns the pass summary and the refreshed subscriptions.                                                             |
-| `GET`  | `/api/status`        | Collector state: `status` (`idle`/`running`/`ok`/`stale`/`error`), `last_run_time`, `next_run_time`, `interval_seconds`, last `usage_scan` summary. |
+| Method | Path                 | Returns                                                                                                                                                      |
+| ------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`  | `/api/subscriptions` | Every account seen, with its latest snapshot (`five_hour_pct`, `seven_day_pct`, reset times, spend, `is_stale`).                                             |
+| `GET`  | `/api/snapshots`     | Time series of snapshots. Filters: `subscription_ids`, `date`, `start_hour`, `end_hour`, `since`, `until`, `limit` (default 2000, max 20000).                |
+| `GET`  | `/api/events`        | Detected `five_hour_reset`, `seven_day_reset` and `exhausted` events. Filters: `subscription_ids`, `date`, `since`, `until`, `limit` (default 100, max 500). |
+| `POST` | `/api/refresh`       | Runs one collection pass now. Returns the pass summary and the refreshed subscriptions.                                                                      |
+| `GET`  | `/api/status`        | Collector state: `status` (`idle`/`running`/`ok`/`stale`/`error`), `last_run_time`, `next_run_time`, `interval_seconds`, last `usage_scan` summary.          |
 
 ## Usage insights
 
